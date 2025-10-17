@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>Markdown 特效转换器 · 选中即存 GitHub（iPad/PC 适配稳定版）</title>
+<title>Markdown 特效转换器 · iPad 选区最终修复 · 单片段单文件/409防冲突</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
   :root{
@@ -18,7 +18,6 @@
   h2{margin:0 0 8px 0;font-size:18px}
   .subtle{color:var(--muted);font-size:12px}
 
-  /* 导入卡片 */
   .import-card{border:1px dashed var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#fafbff,transparent)}
   .import-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .input-group{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:280px;background:#fff}
@@ -37,14 +36,17 @@
   .ok-pill{background:#ecfdf5;color:#065f46}
 
   textarea#markdown-input{width:100%;min-height:260px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:12px;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Monaco,"Courier New",monospace;background:#fcfcff}
-
   .toolbar{display:flex;gap:8px;align-items:center;margin:8px 0 12px 0;flex-wrap:wrap}
   #html-output{flex:1;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;overflow:auto}
-  /* 关键：iPad 必须允许选择文本；按钮不允许被选择 */
-  #html-output, #html-output * { -webkit-user-select:text; user-select:text; }
-  .toolbar, #sel-toolbar, .btn, button { -webkit-user-select:none; user-select:none; }
 
-  /* 浮动工具条（PC使用；移动端隐藏） */
+  /* iOS: 允许选中文本与系统选择菜单 */
+  #html-output, #html-output * { -webkit-user-select:text; user-select:text; -webkit-touch-callout:text; }
+  .toolbar, #sel-toolbar, .btn, button { -webkit-user-select:none; user-select:none; }
+  @media (pointer:coarse){ .word{ touch-action:manipulation; } }
+
+  span.word{cursor:pointer;transition:background-color .2s}
+  span.word:hover{background:#fffbcc}
+
   .sel-toolbar{
     position:absolute;top:0;left:0;transform:translate(-50%,-120%);
     display:flex;gap:6px;background:#111827;color:#fff;padding:6px 8px;border-radius:10px;
@@ -54,18 +56,26 @@
   .sel-toolbar .btn-ghost{background:#374151;color:#fff;border-color:#4b5563}
   .hidden{display:none!important}
 
-  /* toast */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998}
+  .modal{
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:min(650px,92vw);background:#fff;padding:16px;border-radius:14px;
+    box-shadow:0 20px 60px rgba(0,0,0,.35);z-index:9999
+  }
+  .grid{display:grid;grid-template-columns:160px 1fr;gap:10px 12px;align-items:center}
+  .grid input[type="text"], .grid input[type="password"]{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}
+  .grid .row-span{grid-column:1 / -1}
+  .grid .switches{display:flex;flex-wrap:wrap;gap:10px}
+  .switch{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:#f9fafb}
+  .switch input{transform:scale(1.15)}
+  .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+
   .toast{
     position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
     background:#111827;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 12px 26px rgba(0,0,0,.25);z-index:10000
   }
 
   @media (max-width:1000px){.container{flex-direction:column}.left{width:100%}}
-
-  /* 移动端：隐藏浮条，避免挡住系统选区柄 */
-  @media (pointer:coarse){
-    #sel-toolbar{ display:none !important; }
-  }
 </style>
 </head>
 <body>
@@ -101,7 +111,7 @@
     </div>
 
     <textarea id="markdown-input" placeholder="在此输入或粘贴 Markdown..."></textarea>
-    <span class="subtle">导入后自动在右侧预览；右侧选中文本→点“保存选中”。（iPad：长按选择）</span>
+    <span class="subtle">导入后自动在右侧预览；右侧可选中任意内容保存到 GitHub。</span>
   </section>
 
   <!-- RIGHT -->
@@ -127,7 +137,7 @@
   </section>
 </div>
 
-<!-- PC 浮动保存条（iPad/触摸设备已在 CSS 中隐藏） -->
+<!-- 选区悬浮条 -->
 <div id="sel-toolbar" class="sel-toolbar hidden">
   <button id="save-snippet-btn" class="btn btn-primary" type="button">
     <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
@@ -148,16 +158,18 @@
     <label for="gh-repo">Repo*</label>
     <input id="gh-repo" type="text" placeholder="my-notes" />
     <label for="gh-branch">Branch</label>
-    <input id="gh-branch" type="text" placeholder="main（建议使用不受保护分支，如 snippets）" />
+    <input id="gh-branch" type="text" placeholder="main（默认）" />
     <label for="gh-dir">目录*</label>
     <input id="gh-dir" type="text" placeholder="snippets/（建议专用目录）" />
     <label for="gh-file">文件名（可留空）</label>
-    <input id="gh-file" type="text" placeholder="留空则按日期/小时生成" />
-    <div class="row-span" style="grid-column:1/-1;display:flex;gap:12px;flex-wrap:wrap">
-      <label class="switch"><input id="gh-per-snippet" type="checkbox" checked> 每条片段单独创建新文件（推荐）</label>
-      <label class="switch"><input id="gh-split-hour" type="checkbox"> 追加模式：按小时切分文件名（YYYY-MM-DD-HH.md）</label>
+    <input id="gh-file" type="text" placeholder="snippets.md（留空则按日期/小时生成）" />
+    <div class="row-span">
+      <div class="switches">
+        <label class="switch"><input id="gh-per-snippet" type="checkbox" checked> 每条片段单独创建新文件（推荐）</label>
+        <label class="switch"><input id="gh-split-hour" type="checkbox"> 追加模式下按小时切分文件名（YYYY-MM-DD-HH.md）</label>
+      </div>
     </div>
-    <div class="subtle" style="grid-column:1 / -1">参数存于 localStorage（仅本浏览器）。</div>
+    <div class="subtle row-span">参数存于 localStorage（仅本浏览器）。</div>
   </div>
   <div class="actions">
     <button class="btn btn-ghost" id="cancel-settings" type="button">取消</button>
@@ -167,30 +179,21 @@
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
-/* =============== 基本引用 & 状态 =============== */
-const IS_TOUCH = matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window;
-const leftPanel = document.getElementById('left-panel');
-const markdownInput = document.getElementById('markdown-input');
+/** ================== 基本引用 ================== */
+const htmlOutput = document.getElementById('html-output');
 const convertBtn = document.getElementById('convert-btn');
 const toggleBtn = document.getElementById('toggle-btn');
 const downloadBtn = document.getElementById('download-btn');
-const htmlOutput = document.getElementById('html-output');
+const leftPanel = document.getElementById('left-panel');
+const markdownInput = document.getElementById('markdown-input');
 
-const uploadBtn = document.getElementById('upload-btn');
-const fileInput = document.getElementById('file-input');
-const fileNameSpan = document.getElementById('file-name');
-
-const urlInput = document.getElementById('md-url');
-const importUrlBtn = document.getElementById('import-url-btn');
-const dropzone = document.getElementById('dropzone');
-
-const toolbar = document.getElementById('sel-toolbar'); // PC 浮条
-const saveSnippetBtn = document.getElementById('save-snippet-btn');
+const toolbar = document.getElementById('sel-toolbar');
 const saveSelectionBtn = document.getElementById('save-selection-btn');
-const openSettingsBtn = document.getElementById('open-settings-btn');
-const openSettingsTop = document.getElementById('open-settings-top');
+const saveSnippetBtn   = document.getElementById('save-snippet-btn');
 
-const modal = document.getElementById('settings-modal');
+const openSettingsBtn  = document.getElementById('open-settings-btn');
+const openSettingsTop  = document.getElementById('open-settings-top');
+const modal    = document.getElementById('settings-modal');
 const backdrop = document.getElementById('modal-backdrop');
 
 const elToken  = document.getElementById('gh-token');
@@ -202,36 +205,50 @@ const elFile   = document.getElementById('gh-file');
 const elPerSnippet = document.getElementById('gh-per-snippet');
 const elSplitHour  = document.getElementById('gh-split-hour');
 
-const btnCancel= document.getElementById('cancel-settings');
-const btnSave  = document.getElementById('save-settings');
-
 const cfgState = document.getElementById('cfg-state');
-const cfgOk = document.getElementById('cfg-ok');
+const cfgOk    = document.getElementById('cfg-ok');
 
-let sourceOverride = null; // {title, url}
-let _savingFlag = false;
-let _lastSaveTs = 0;
-const MIN_INTERVAL_MS = 400;
+/** 其它引用（上传/导入，不变） */
+const uploadBtn   = document.getElementById('upload-btn');
+const fileInput   = document.getElementById('file-input');
+const fileNameSpan= document.getElementById('file-name');
+const urlInput    = document.getElementById('md-url');
+const importUrlBtn= document.getElementById('import-url-btn');
+const dropzone    = document.getElementById('dropzone');
 
-/* =============== Markdown → HTML =============== */
+/** 导入来源（用于 Source 字段） */
+let sourceOverride = null;
+
+/** 选区“快照”——解决 iPad 按钮清空选区的问题 */
+let latestSelection = { text:'', range:null };
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
+
+/** ================== Markdown → HTML ================== */
 convertBtn.addEventListener('click', () => {
   const md = markdownInput.value || '';
   const rawHtml = marked.parse(md);
-
-  // 关键：为 iPad 稳定选择，移动端不做“逐词包裹”
-  if (IS_TOUCH) {
-    htmlOutput.innerHTML = rawHtml;
-  } else {
-    htmlOutput.innerHTML = rawHtml;
-    wrapWords(htmlOutput); // PC 保留逐词高亮+发音（不影响选择）
-  }
+  htmlOutput.innerHTML = rawHtml;
+  wrapWords(htmlOutput);
+  // 渲染后清空旧快照
+  latestSelection = { text:'', range:null };
+  handleSelectionChange();
 });
 toggleBtn.addEventListener('click', () => {
   leftPanel.style.display = leftPanel.style.display === 'none' ? '' : 'none';
   toggleBtn.textContent = (leftPanel.style.display === 'none') ? '显示输入区' : '收起输入区';
 });
-downloadBtn.addEventListener('click', downloadHTML);
+downloadBtn.addEventListener('click', () => {
+  const content = htmlOutput.innerHTML;
+  const tpl = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>导出HTML</title>
+  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;padding:20px;background:#f8fafc}span.word{cursor:pointer}span.word:hover{background:#fffbcc}</style>
+  </head><body>${content}</body></html>`;
+  const blob = new Blob([tpl],{type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'),{href:url,download:'markdown_export.html'});
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+});
 
+/** 把纯文本节点包成 span.word；点击朗读，若当前有选区则不打扰（避免清空选区） */
 function wrapWords(root){
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
   const nodes = [];
@@ -248,8 +265,15 @@ function wrapWords(root){
         span.className='word'; span.textContent = part;
         span.setAttribute('data-word', part);
         span.setAttribute('data-sentence', sentence);
-        span.addEventListener('click', (e)=>playWord(e.target.getAttribute('data-word')));
-        span.addEventListener('dblclick', (e)=>playSentence(e.target.getAttribute('data-sentence')));
+        span.addEventListener('click', (e)=>{
+          // 若已有跨词/句选区，忽略点击，避免 iOS 清空选区
+          if (latestSelection.text && latestSelection.text.length>0) return;
+          playWord(e.currentTarget.getAttribute('data-word'));
+        });
+        span.addEventListener('dblclick', (e)=>{
+          if (latestSelection.text && latestSelection.text.length>0) return;
+          playSentence(e.currentTarget.getAttribute('data-sentence'));
+        });
         fragRoot.appendChild(span);
       } else {
         fragRoot.appendChild(document.createTextNode(part));
@@ -260,18 +284,154 @@ function wrapWords(root){
 }
 function playWord(w){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(w); const a=new Audio(url); a.playbackRate=1.3; a.play().catch(()=>{}); }
 function playSentence(s){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(s); const a=new Audio(url); a.playbackRate=1.1; a.play().catch(()=>{}); }
-function downloadHTML(){
-  const content = htmlOutput.innerHTML;
-  const tpl = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>导出HTML</title>
-  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;padding:20px;background:#f8fafc}span.word{cursor:pointer}span.word:hover{background:#fffbcc}</style>
-  </head><body>${content}</body></html>`;
-  const blob = new Blob([tpl],{type:'text/html'});
-  const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'),{href:url,download:'markdown_export.html'});
-  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+
+/** ================== 选区侦测（iPad 关键：用快照） ================== */
+function selectionInsideOutput(){
+  const sel = window.getSelection();
+  if(!sel || sel.rangeCount===0 || sel.isCollapsed) return false;
+  const rng = sel.getRangeAt(0);
+  const nodeOf = n => n?.nodeType===1 ? n : n?.parentNode;
+  const container = nodeOf(rng.commonAncestorContainer);
+  const start = nodeOf(rng.startContainer);
+  const end   = nodeOf(rng.endContainer);
+  if (container && htmlOutput.contains(container)) return true;
+  if ((start && htmlOutput.contains(start)) || (end && htmlOutput.contains(end))) return true;
+  try{
+    const r = rng.getBoundingClientRect();
+    const o = htmlOutput.getBoundingClientRect();
+    const overlap = !(r.right<o.left || r.left>o.right || r.bottom<o.top || r.top>o.bottom);
+    if (overlap) return true;
+  }catch{}
+  return false;
+}
+// 更新“快照”
+function snapshotSelection(){
+  const sel = window.getSelection();
+  if(sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput()){
+    latestSelection = { text: sel.toString().trim(), range: sel.getRangeAt(0).cloneRange() };
+  }else{
+    // 不覆盖已有快照（iOS点击按钮会清空实时选区）
+  }
+  updateSaveButtons();
+}
+// UI：按钮状态 & 悬浮条位置
+function updateSaveButtons(){
+  const has = !!(latestSelection.text && latestSelection.text.length>0);
+  saveSelectionBtn.disabled = !has || _savingFlag;
+  saveSnippetBtn.disabled   = !has || _savingFlag;
+  saveSelectionBtn.innerText = has ? `保存选中（${latestSelection.text.length}字）` : '保存选中';
+  if (has){
+    try{
+      const r = latestSelection.range.getBoundingClientRect();
+      const top  = r.top + window.scrollY;
+      const left = r.left + r.width/2 + window.scrollX;
+      toolbar.style.top = `${top}px`;
+      toolbar.style.left = `${left}px`;
+      show(toolbar);
+    }catch{ hide(toolbar); }
+  }else{
+    hide(toolbar);
+  }
+}
+let rafSel = 0;
+function scheduleSnapshot(){ cancelAnimationFrame(rafSel); rafSel = requestAnimationFrame(snapshotSelection); }
+// iOS：在 selectionchange / touch 之后延迟一帧再读选区
+document.addEventListener('selectionchange', scheduleSnapshot, false);
+document.addEventListener('mouseup', scheduleSnapshot, false);
+document.addEventListener('keyup', scheduleSnapshot, false);
+['touchstart','touchend'].forEach(ev=>document.addEventListener(ev, ()=>setTimeout(snapshotSelection,0), true));
+document.addEventListener('scroll', ()=>hide(toolbar), true);
+window.addEventListener('resize', ()=>hide(toolbar));
+
+/** ================== 保存按钮绑定（触控下优先 touchend） ================== */
+let handledTouchSave = false;
+function bindSaveButton(btn){
+  // 触控：在 touchend 立即保存并阻止后续 click
+  btn.addEventListener('touchend', (e)=>{
+    handledTouchSave = true;
+    e.preventDefault();
+    doSaveCurrentSelection();
+    setTimeout(()=>handledTouchSave=false, 400);
+  }, {passive:false});
+  // 桌面或非触控：走 click；触控已处理则拦截
+  btn.addEventListener('click', (e)=>{
+    if (isTouch && handledTouchSave){ e.preventDefault(); return; }
+    doSaveCurrentSelection();
+  });
+  // 防止 mousedown 抢焦点导致选区丢失（桌面）
+  btn.addEventListener('mousedown', (e)=>{ e.preventDefault(); }, {passive:false});
+}
+bindSaveButton(saveSelectionBtn);
+bindSaveButton(saveSnippetBtn);
+
+/** ================== 保存主流程（优先用快照文本） ================== */
+const MIN_INTERVAL_MS = 400;
+let _savingFlag = false;
+let _lastSaveTs = 0;
+
+async function doSaveCurrentSelection(){
+  const nowTs = Date.now();
+  if (nowTs - _lastSaveTs < MIN_INTERVAL_MS) { toast('操作过快，稍等一下…'); return; }
+  const cfg = getConfig();
+  if(!cfg.token || !cfg.owner || !cfg.repo || !cfg.dir){ openSettings(); return; }
+
+  const text = latestSelection.text || '';
+  if(!text){ toast('请先在右侧预览文本中选择！'); return; }
+
+  if(_savingFlag) return;
+  _savingFlag = true;
+  updateSaveButtons();
+
+  try{
+    const now = new Date();
+    const timeStr = new Intl.DateTimeFormat('zh-CN',{
+      timeZone:'Europe/Berlin', year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
+    }).format(now).replace(/\//g,'-');
+
+    const sourceTitle = (sourceOverride?.title) ? sourceOverride.title : (document.title || 'Untitled Page');
+    const sourceUrl   = (sourceOverride?.url)   ? sourceOverride.url   : location.href;
+
+    const entry = `
+
+---
+**Time:** ${timeStr} (Europe/Berlin)  
+**Source:** [${escapeMd(sourceTitle)}](${sourceUrl})
+
+> ${escapeMd(text).replace(/\n/g,'\n> ')}
+`;
+
+    const tz = 'Europe/Berlin';
+    const yyyy = new Intl.DateTimeFormat('en-CA',{timeZone:tz, year:'numeric'}).format(now);
+    const mm   = new Intl.DateTimeFormat('en-CA',{timeZone:tz, month:'2-digit'}).format(now);
+    const dd   = new Intl.DateTimeFormat('en-CA',{timeZone:tz, day:'2-digit'}).format(now);
+    const HH   = String(now.getHours()).padStart(2,'0');
+
+    if (getConfig().perSnippet){
+      await saveAsNewFile(getConfig(), entry, `save snippet @ ${timeStr}`, {yyyy,mm,dd,HH});
+    } else {
+      const fileName = (getConfig().file && getConfig().file.trim())
+        ? getConfig().file.trim()
+        : (getConfig().splitHour ? `${yyyy}-${mm}-${dd}-${HH}.md` : `${yyyy}-${mm}-${dd}.md`);
+      const path = getConfig().dir + fileName;
+      await withWriteLock(path, async () => {
+        await safeAppendToFile(getConfig(), path, entry, `append snippet @ ${timeStr}`);
+      });
+    }
+
+    _lastSaveTs = Date.now();
+    toast('已保存到 GitHub ✅');
+    // 不强制清空快照——允许连续保存同一选区（如果需要可手动改）
+  }catch(err){
+    const extra = err?.detail ? `\n${String(err.detail).slice(0,180)}` : '';
+    toast('保存失败：'+(err?.message||'未知错误')+extra);
+  }finally{
+    _savingFlag = false;
+    updateSaveButtons();
+  }
 }
 
-/* =============== 导入：文件/拖拽 =============== */
+/** ================== 文件/链接导入（与之前一致） ================== */
 uploadBtn.addEventListener('click',()=>fileInput.click());
 fileInput.addEventListener('change', async (e)=>{
   const file = e.target.files?.[0]; if(!file) return;
@@ -311,10 +471,10 @@ dropzone.addEventListener('drop', async (e)=>{
   }catch{ toast('读取文件失败'); }
 });
 
-/* =============== 导入：URL =============== */
+const importUrlBtn = document.getElementById('import-url-btn');
+const urlInput = document.getElementById('md-url');
 importUrlBtn.addEventListener('click', importFromUrl);
 urlInput.addEventListener('keydown', e=>{ if(e.key==='Enter') importFromUrl(); });
-
 async function importFromUrl(){
   const u = urlInput.value.trim();
   if(!u){ toast('请粘贴 GitHub/Gist 文件链接'); return;}
@@ -372,79 +532,8 @@ async function fetchMarkdownFromUrl(url, token){
   return await r.text();
 }
 
-/* =============== 选区监听（iPad/PC 两套都稳） =============== */
-let _rafSel = 0;
-const scheduleSelUpdate = ()=>{ cancelAnimationFrame(_rafSel); _rafSel = requestAnimationFrame(updateSelectionUI); };
-// iOS 需要在 selectionchange 后延迟读取
-document.addEventListener('selectionchange', () => setTimeout(scheduleSelUpdate, 0), true);
-document.addEventListener('mouseup', scheduleSelUpdate, true);
-document.addEventListener('keyup', scheduleSelUpdate, true);
-['touchstart','touchend'].forEach(ev=>document.addEventListener(ev, ()=>setTimeout(updateSelectionUI,0), true));
-document.addEventListener('scroll', ()=>hide(toolbar), true);
-window.addEventListener('resize', ()=>hide(toolbar));
-
-saveSelectionBtn.addEventListener('click', async ()=>{ await doSaveCurrentSelection(); });
-saveSnippetBtn && saveSnippetBtn.addEventListener('click', async ()=>{ await doSaveCurrentSelection(); });
-
-function selectionIntersects(el){
-  const sel = window.getSelection();
-  if(!sel || sel.isCollapsed || sel.rangeCount===0) return false;
-  const range = sel.getRangeAt(0);
-  // 端点/容器包含
-  const nodeOf = (n)=> n?.nodeType===1 ? n : n?.parentNode;
-  const container = nodeOf(range.commonAncestorContainer);
-  const start = nodeOf(range.startContainer);
-  const end   = nodeOf(range.endContainer);
-  if (container && el.contains(container)) return true;
-  if ((start && el.contains(start)) || (end && el.contains(end))) return true;
-  // 几何重叠兜底
-  try{
-    const rects = range.getClientRects();
-    const o = el.getBoundingClientRect();
-    for (const r of rects){
-      const overlap = !(r.right < o.left || r.left > o.right || r.bottom < o.top || r.top > o.bottom);
-      if(overlap) return true;
-    }
-  }catch{}
-  // compareBoundaryPoints 兜底
-  try{
-    const elRange = document.createRange();
-    elRange.selectNodeContents(el);
-    const startsAfterEnd   = range.compareBoundaryPoints(Range.START_TO_END, elRange) >= 0;
-    const endsBeforeStart  = range.compareBoundaryPoints(Range.END_TO_START, elRange) <= 0;
-    return !(startsAfterEnd || endsBeforeStart);
-  }catch{}
-  return false;
-}
-function getSelectedText(){
-  const sel = window.getSelection();
-  if(!sel || sel.isCollapsed || sel.rangeCount===0) return '';
-  if(!selectionIntersects(htmlOutput)) return '';
-  return sel.toString().trim();
-}
-function updateSelectionUI(){
-  const txt = getSelectedText();
-  // 顶部按钮（iPad/PC）
-  saveSelectionBtn.disabled = !txt || _savingFlag;
-  saveSelectionBtn.textContent = txt ? `保存选中（${txt.length}字）` : '保存选中';
-
-  // PC 浮条（移动端隐藏）
-  if (!IS_TOUCH && txt){
-    try{
-      const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
-      const top = rect.top + window.scrollY;
-      const left = rect.left + rect.width/2 + window.scrollX;
-      toolbar.style.top = `${top}px`;
-      toolbar.style.left = `${left}px`;
-      show(toolbar);
-    }catch{ hide(toolbar); }
-  } else {
-    hide(toolbar);
-  }
-}
-
-/* =============== 保存（并发串行+退避；iPad/PC 通用） =============== */
-const writeQueues = new Map(); // path -> Promise 链
+/** ================== 并发串行 & 409 退避 ================== */
+const writeQueues = new Map();
 function withWriteLock(path, task){
   const prev = writeQueues.get(path) || Promise.resolve();
   const next = prev.then(task).finally(()=>{
@@ -455,74 +544,6 @@ function withWriteLock(path, task){
 }
 const sleep = (ms)=> new Promise(r=>setTimeout(r, ms));
 
-async function doSaveCurrentSelection(){
-  const nowTs = Date.now();
-  if (nowTs - _lastSaveTs < MIN_INTERVAL_MS) { toast('操作过快，稍等一下…'); return; }
-
-  const cfg = getConfig();
-  if(!cfg.token || !cfg.owner || !cfg.repo || !cfg.dir){ openSettings(); return; }
-
-  const text = getSelectedText();
-  if(!text){ toast('请在右侧预览中选中文本！'); return; }
-
-  if(_savingFlag) return;
-  _savingFlag = true;
-  saveSelectionBtn.disabled = true;
-  if (saveSnippetBtn) saveSnippetBtn.disabled = true;
-
-  try{
-    const now = new Date();
-    const timeStr = new Intl.DateTimeFormat('zh-CN',{
-      timeZone:'Europe/Berlin', year:'numeric', month:'2-digit', day:'2-digit',
-      hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
-    }).format(now).replace(/\//g,'-');
-
-    const sourceTitle = (sourceOverride?.title) ? sourceOverride.title : (document.title || 'Untitled Page');
-    const sourceUrl   = (sourceOverride?.url)   ? sourceOverride.url   : location.href;
-
-    const entry = `
-
----
-**Time:** ${timeStr} (Europe/Berlin)  
-**Source:** [${escapeMd(sourceTitle)}](${sourceUrl})
-
-> ${escapeMd(text).replace(/\n/g,'\n> ')}
-`;
-
-    const tz = 'Europe/Berlin';
-    const yyyy = new Intl.DateTimeFormat('en-CA',{timeZone:tz, year:'numeric'}).format(now);
-    const mm   = new Intl.DateTimeFormat('en-CA',{timeZone:tz, month:'2-digit'}).format(now);
-    const dd   = new Intl.DateTimeFormat('en-CA',{timeZone:tz, day:'2-digit'}).format(now);
-    const HH   = String(now.getHours()).padStart(2,'0');
-
-    if (cfg.perSnippet){
-      await saveAsNewFile(cfg, entry, `save snippet @ ${timeStr}`, {yyyy,mm,dd,HH});
-    } else {
-      const fileName = (cfg.file && cfg.file.trim())
-        ? cfg.file.trim()
-        : (cfg.splitHour ? `${yyyy}-${mm}-${dd}-${HH}.md` : `${yyyy}-${mm}-${dd}.md`);
-      const path = cfg.dir + fileName;
-      await withWriteLock(path, async () => {
-        await safeAppendToFile(cfg, path, entry, `append snippet @ ${timeStr}`);
-      });
-    }
-
-    _lastSaveTs = Date.now();
-    toast('已保存到 GitHub ✅');
-    hide(toolbar);
-    const sel = window.getSelection(); sel && sel.removeAllRanges();
-    updateSelectionUI();
-
-  }catch(err){
-    const extra = err?.detail ? `\n${String(err.detail).slice(0,180)}` : '';
-    toast('保存失败：'+(err?.message||'未知错误')+extra);
-  }finally{
-    _savingFlag = false;
-    updateSelectionUI();
-  }
-}
-
-/* =============== 两种保存策略 =============== */
 async function saveAsNewFile(cfg, entry, commitMsg, parts){
   const {yyyy,mm,dd,HH} = parts;
   const d2 = (n)=>String(n).padStart(2,'0');
@@ -543,7 +564,6 @@ async function safeAppendToFile(cfg, path, appendedContent, commitMsg){
     const header = '# Collected Snippets\n';
     const base = existing?.contentStr ?? header;
     const newContent = (base.endsWith('\n') ? base : base + '\n') + appendedContent;
-
     try{
       await githubPutFile(cfg, path, newContent, existing?.sha, commitMsg);
       return;
@@ -556,8 +576,11 @@ async function safeAppendToFile(cfg, path, appendedContent, commitMsg){
   throw new Error('多次重试后仍 409：并发写入过多或分支受保护。可切换“每条片段单独新文件”或改用不受保护的分支。');
 }
 
-/* =============== 设置（localStorage） =============== */
-[openSettingsBtn, openSettingsTop].forEach(b=>b && b.addEventListener('click', openSettings));
+/** ================== 设置存取 ================== */
+const openSettingsTopEl = document.getElementById('open-settings-top');
+const btnCancel = document.getElementById('cancel-settings');
+const btnSave   = document.getElementById('save-settings');
+[openSettingsBtn, openSettingsTopEl].forEach(b=>b.addEventListener('click', openSettings));
 btnCancel.addEventListener('click', closeSettings);
 backdrop.addEventListener('click', closeSettings);
 btnSave.addEventListener('click', ()=>{
@@ -566,19 +589,6 @@ btnSave.addEventListener('click', ()=>{
   closeSettings();
   toast('设置已保存');
 });
-
-function updateCfgBadge(){
-  const cfg = getConfig();
-  const ok = !!(cfg.token && cfg.owner && cfg.repo && cfg.dir);
-  cfgState.textContent = ok ? '已配置' : '未配置';
-  cfgState.className = 'pill ' + (ok?'ok-pill':'');
-  cfgOk?.classList?.toggle?.('hidden', !ok);
-}
-function openSettings(){ show(backdrop); show(modal); }
-function closeSettings(){ hide(modal); hide(backdrop); }
-function show(el){ el && el.classList.remove('hidden'); }
-function hide(el){ el && el.classList.add('hidden'); }
-
 function getConfig(){
   return {
     token:  localStorage.getItem('gh_token')  || elToken.value.trim(),
@@ -613,10 +623,20 @@ function loadSettings(){
   elPerSnippet.checked = per === null ? true : per === '1';
   elSplitHour.checked  = hr  === null ? false: hr  === '1';
 }
+function updateCfgBadge(){
+  const cfg = getConfig();
+  const ok = !!(cfg.token && cfg.owner && cfg.repo && cfg.dir);
+  const cfgState = document.getElementById('cfg-state');
+  const cfgOk    = document.getElementById('cfg-ok');
+  cfgState.textContent = ok ? '已配置' : '未配置';
+  cfgState.className = 'pill ' + (ok?'ok-pill':'');
+  cfgOk?.classList?.toggle?.('hidden', !ok);
+}
+function openSettings(){ show(backdrop); show(modal); }
+function closeSettings(){ hide(modal); hide(backdrop); }
 
-/* =============== GitHub API =============== */
+/** ================== GitHub API ================== */
 const GH_API = 'https://api.github.com';
-
 async function githubGetFile(cfg, path){
   const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`;
   const res = await fetch(url,{headers:{
@@ -637,7 +657,6 @@ async function githubGetFile(cfg, path){
   const contentStr = b64Decode(json.content||'');
   return { sha: json.sha, contentStr };
 }
-
 async function githubPutFile(cfg, path, contentStr, sha, message){
   const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}`;
   const body = { message: message || 'update file', content: b64Encode(contentStr), branch: cfg.branch };
@@ -680,19 +699,16 @@ function addRateLimitMeta(err, res){
   if(rlReset!==null) err.rateReset = rlReset;
 }
 
-/* =============== 工具 =============== */
+/** ================== 工具 & 初始化 ================== */
+function show(el){ el.classList.remove('hidden'); }
+function hide(el){ el.classList.add('hidden'); }
+function toast(msg, ms=2200){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), ms); }
 function b64Encode(str){ const bytes=new TextEncoder().encode(str); let bin=''; bytes.forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin); }
 function b64Decode(b64){ const bin=atob((b64||'').replace(/\n/g,'')); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
 function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
-function toast(msg, ms=2200){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), ms); }
-function openSettings(){ show(backdrop); show(modal); }
-function closeSettings(){ hide(modal); hide(backdrop); }
-function show(el){ el && el.classList.remove('hidden'); }
-function hide(el){ el && el.classList.add('hidden'); }
 
-/* =============== 初始化 =============== */
 window.onload = ()=>{
-  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；<b>右侧选中文本</b>后，上方「保存选中」按钮会亮起。<br>iPad：长按选择文本即可。</p>';
+  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；右侧<b>长按选择</b>后点「保存选中」。<br>iPad 已修复：按钮不会清空选区；若仍无反应，请先单击一下右侧文本再长按选择。</p>';
   loadSettings();
   updateCfgBadge();
 };
