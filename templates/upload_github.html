@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>Markdown 特效转换器 · 选中即存 GitHub · 文件/链接导入（409修复·支持“单片段单文件/按小时切分”）</title>
+<title>Markdown 特效转换器 · 选中即存 GitHub · iPad 选区修复</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
   :root{
@@ -18,7 +18,6 @@
   h2{margin:0 0 8px 0;font-size:18px}
   .subtle{color:var(--muted);font-size:12px}
 
-  /* 导入卡片 */
   .import-card{border:1px dashed var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#fafbff,transparent)}
   .import-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .input-group{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:280px;background:#fff}
@@ -39,10 +38,18 @@
   textarea#markdown-input{width:100%;min-height:260px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:12px;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Monaco,"Courier New",monospace;background:#fcfcff}
   .toolbar{display:flex;gap:8px;align-items:center;margin:8px 0 12px 0;flex-wrap:wrap}
   #html-output{flex:1;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;overflow:auto}
+
+  /* iOS 必要：允许选中文本；禁止工具条被选中 */
+  #html-output, #html-output * { -webkit-user-select:text; user-select:text; }
+  .toolbar, #sel-toolbar, .btn, button { -webkit-user-select:none; user-select:none; }
+  /* 移动端触控优化 */
+  @media (pointer:coarse){
+    .word{ touch-action:manipulation; }
+  }
+
   span.word{cursor:pointer;transition:background-color .2s}
   span.word:hover{background:#fffbcc}
 
-  /* 选区浮条 */
   .sel-toolbar{
     position:absolute;top:0;left:0;transform:translate(-50%,-120%);
     display:flex;gap:6px;background:#111827;color:#fff;padding:6px 8px;border-radius:10px;
@@ -52,7 +59,6 @@
   .sel-toolbar .btn-ghost{background:#374151;color:#fff;border-color:#4b5563}
   .hidden{display:none!important}
 
-  /* 设置模态框 */
   .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998}
   .modal{
     position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
@@ -67,7 +73,6 @@
   .switch input{transform:scale(1.15)}
   .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
 
-  /* toast */
   .toast{
     position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
     background:#111827;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 12px 26px rgba(0,0,0,.25);z-index:10000
@@ -78,14 +83,12 @@
 </head>
 <body>
 <div class="container">
-  <!-- LEFT -->
   <section class="panel left" id="left-panel">
     <div style="display:flex;align-items:center;justify-content:space-between">
       <h2>输入 / 导入 Markdown</h2>
       <span id="cfg-state" class="pill" title="GitHub设置状态">未配置</span>
     </div>
 
-    <!-- 导入卡片：上传/拖拽 + 链接导入 -->
     <div class="import-card" id="dropzone">
       <div class="import-row">
         <button id="upload-btn" class="btn btn-primary" type="button" title="选择 .md 文件">
@@ -113,7 +116,6 @@
     <span class="subtle">导入后自动在右侧预览；右侧可选中任意内容保存到 GitHub。</span>
   </section>
 
-  <!-- RIGHT -->
   <section class="panel right">
     <h2 style="margin-bottom:6px">Markdown 特效展示</h2>
     <div class="toolbar">
@@ -125,7 +127,6 @@
       <button id="download-btn" class="btn btn-ghost" type="button">下载 HTML</button>
       <button id="open-settings-top" class="btn btn-ghost" type="button">设置（GitHub）</button>
 
-      <!-- 固定可见的保存按钮（有选区时亮起） -->
       <button id="save-selection-btn" class="btn btn-primary" type="button" disabled title="先在右侧选中文字">
         <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
         保存选中
@@ -137,7 +138,6 @@
   </section>
 </div>
 
-<!-- 选区浮条 -->
 <div id="sel-toolbar" class="sel-toolbar hidden">
   <button id="save-snippet-btn" class="btn btn-primary" type="button">
     <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
@@ -146,7 +146,6 @@
   <button id="open-settings-btn" class="btn btn-ghost" type="button">设置</button>
 </div>
 
-<!-- 设置模态框 -->
 <div id="modal-backdrop" class="modal-backdrop hidden"></div>
 <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <h3 id="settings-title" style="margin:0 0 10px">GitHub 设置</h3>
@@ -165,11 +164,11 @@
     <input id="gh-file" type="text" placeholder="snippets.md（留空则按日期/小时生成）" />
     <div class="row-span">
       <div class="switches">
-        <label class="switch"><input id="gh-per-snippet" type="checkbox"> 每条片段单独创建新文件（推荐，几乎杜绝409）</label>
+        <label class="switch"><input id="gh-per-snippet" type="checkbox"> 每条片段单独创建新文件（推荐）</label>
         <label class="switch"><input id="gh-split-hour" type="checkbox"> 追加模式下按小时切分文件名（YYYY-MM-DD-HH.md）</label>
       </div>
     </div>
-    <div class="subtle row-span">参数存于 localStorage（仅本浏览器）。建议使用不受保护的分支（如 <code>snippets</code>）。</div>
+    <div class="subtle row-span">参数存于 localStorage（仅本浏览器）。</div>
   </div>
   <div class="actions">
     <button class="btn btn-ghost" id="cancel-settings" type="button">取消</button>
@@ -177,10 +176,9 @@
   </div>
 </div>
 
-<!-- marked.js -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
-/** ================== 基本引用 ================== */
+/** 基本引用 */
 const leftPanel = document.getElementById('left-panel');
 const markdownInput = document.getElementById('markdown-input');
 const convertBtn = document.getElementById('convert-btn');
@@ -197,8 +195,8 @@ const importUrlBtn = document.getElementById('import-url-btn');
 const dropzone = document.getElementById('dropzone');
 
 const toolbar = document.getElementById('sel-toolbar');
-const saveSnippetBtn = document.getElementById('save-snippet-btn');  // 浮条保存
-const saveSelectionBtn = document.getElementById('save-selection-btn'); // 固定保存
+const saveSnippetBtn = document.getElementById('save-snippet-btn');
+const saveSelectionBtn = document.getElementById('save-selection-btn');
 const openSettingsBtn = document.getElementById('open-settings-btn');
 const openSettingsTop = document.getElementById('open-settings-top');
 
@@ -220,10 +218,10 @@ const btnSave  = document.getElementById('save-settings');
 const cfgState = document.getElementById('cfg-state');
 const cfgOk = document.getElementById('cfg-ok');
 
-/** 导入来源（便于写入 Source） */
+/** 导入来源 */
 let sourceOverride = null; // {title, url}
 
-/** ================== Markdown → HTML ================== */
+/** Markdown → HTML */
 convertBtn.addEventListener('click', () => {
   const md = markdownInput.value || '';
   const rawHtml = marked.parse(md);
@@ -275,7 +273,7 @@ function downloadHTML(){
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-/** ================== 导入：文件/拖拽 ================== */
+/** 导入：文件/拖拽 */
 uploadBtn.addEventListener('click',()=>fileInput.click());
 fileInput.addEventListener('change', async (e)=>{
   const file = e.target.files?.[0]; if(!file) return;
@@ -315,7 +313,7 @@ dropzone.addEventListener('drop', async (e)=>{
   }catch{ toast('读取文件失败'); }
 });
 
-/** ================== 导入：GitHub/Gist 链接 ================== */
+/** 导入：URL */
 importUrlBtn.addEventListener('click', importFromUrl);
 urlInput.addEventListener('keydown', e=>{ if(e.key==='Enter') importFromUrl(); });
 
@@ -376,44 +374,52 @@ async function fetchMarkdownFromUrl(url, token){
   return await r.text();
 }
 
-/** ================== 选区浮条 + 固定保存按钮 + 快捷键 ================== */
-loadSettings(); // 先读本地配置
-document.addEventListener('mouseup', handleSelectionChange);
-document.addEventListener('keyup', handleSelectionChange);
-document.addEventListener('selectionchange', handleSelectionChange);
+/** 事件：让 iOS 确保能拿到选区（延迟到下一帧） */
+let _rafSel = 0;
+const scheduleSelUpdate = ()=>{ cancelAnimationFrame(_rafSel); _rafSel = requestAnimationFrame(handleSelectionChange); };
+document.addEventListener('selectionchange', scheduleSelUpdate, false);
+document.addEventListener('mouseup', scheduleSelUpdate, false);
+document.addEventListener('keyup', scheduleSelUpdate, false);
+['touchstart','touchend'].forEach(ev=>document.addEventListener(ev, ()=>setTimeout(handleSelectionChange,0), true));
 document.addEventListener('scroll', ()=>hide(toolbar), true);
 window.addEventListener('resize', ()=>hide(toolbar));
 
 saveSelectionBtn.addEventListener('click', async ()=>{ await doSaveCurrentSelection(); });
 saveSnippetBtn.addEventListener('click', async ()=>{ await doSaveCurrentSelection(); });
 
-document.addEventListener('keydown', async (e)=>{
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){
-    e.preventDefault();
-    await doSaveCurrentSelection();
-  }
-});
-
-/** 仅允许右侧预览区域的选中触发保存 */
+/** 仅允许“右侧预览”内的选区，但在 iOS 下做三重兜底 */
 function selectionInsideOutput(){
   const sel = window.getSelection();
-  if(!sel || sel.rangeCount===0 || sel.isCollapsed) return false;
-  const range = sel.getRangeAt(0);
-  let node = range.commonAncestorContainer;
-  while(node){
-    if(node===htmlOutput) return true;
-    node = node.parentNode;
-  }
+  if(!sel || sel.isCollapsed || sel.rangeCount===0) return false;
+  const rng = sel.getRangeAt(0);
+
+  const nodeOf = (n)=> n?.nodeType===1 ? n : n?.parentNode;
+  const container = nodeOf(rng.commonAncestorContainer);
+  const start = nodeOf(rng.startContainer);
+  const end   = nodeOf(rng.endContainer);
+
+  // 1) 容器包含
+  if (container && htmlOutput.contains(container)) return true;
+  // 2) 端点包含
+  if ((start && htmlOutput.contains(start)) || (end && htmlOutput.contains(end))) return true;
+  // 3) 几何重叠兜底（iOS 某些场景）
+  try{
+    const r = rng.getBoundingClientRect();
+    const o = htmlOutput.getBoundingClientRect();
+    const overlap = !(r.right < o.left || r.left > o.right || r.bottom < o.top || r.top > o.bottom);
+    if (overlap) return true;
+  }catch{}
   return false;
 }
 function getSelectedText(){
-  if(!selectionInsideOutput()) return '';
   const sel = window.getSelection();
+  if(!sel || sel.isCollapsed || sel.rangeCount===0) return '';
+  if(!selectionInsideOutput()) return '';
   return sel.toString().trim();
 }
 
-/** =========== 写入串行化锁 & 轻节流 & 重试（核心修复） =========== */
-const writeQueues = new Map(); // path -> Promise 链
+/** 并发串行 & 退避（保持不变） */
+const writeQueues = new Map();
 function withWriteLock(path, task){
   const prev = writeQueues.get(path) || Promise.resolve();
   const next = prev.then(task).finally(()=>{
@@ -425,7 +431,7 @@ function withWriteLock(path, task){
 const sleep = (ms)=> new Promise(r=>setTimeout(r, ms));
 let _savingFlag = false;
 let _lastSaveTs = 0;
-const MIN_INTERVAL_MS = 400; // 轻节流：两次保存至少间隔 400ms
+const MIN_INTERVAL_MS = 400;
 
 async function doSaveCurrentSelection(){
   const nowTs = Date.now();
@@ -434,9 +440,9 @@ async function doSaveCurrentSelection(){
   if(!cfg.token || !cfg.owner || !cfg.repo || !cfg.dir){ openSettings(); return; }
 
   const text = getSelectedText();
-  if(!text){ toast('请先在右侧预览中选中文本'); return; }
+  if(!text){ toast('请在右侧预览中选中文本！'); return; }
 
-  if(_savingFlag) return; // 防连点
+  if(_savingFlag) return;
   _savingFlag = true;
   saveSelectionBtn.disabled = true; saveSnippetBtn.disabled = true;
 
@@ -466,10 +472,8 @@ async function doSaveCurrentSelection(){
     const HH   = String(now.getHours()).padStart(2,'0');
 
     if (getConfig().perSnippet){
-      // 方案B（推荐）：每条片段新文件（几乎杜绝409）
       await saveAsNewFile(getConfig(), entry, `save snippet @ ${timeStr}`, {yyyy,mm,dd,HH});
     } else {
-      // 方案A：单文件追加（可能409，已做串行 + 退避）
       const fileName = (getConfig().file && getConfig().file.trim())
         ? getConfig().file.trim()
         : (getConfig().splitHour ? `${yyyy}-${mm}-${dd}-${HH}.md` : `${yyyy}-${mm}-${dd}.md`);
@@ -495,7 +499,7 @@ async function doSaveCurrentSelection(){
   }
 }
 
-/** 关键1：每条片段独立新文件（不传 sha，避免并发冲突） */
+/** 单片段新文件 & 追加模式 */
 async function saveAsNewFile(cfg, entry, commitMsg, parts){
   const {yyyy,mm,dd,HH} = parts;
   const d2 = (n)=>String(n).padStart(2,'0');
@@ -505,19 +509,14 @@ async function saveAsNewFile(cfg, entry, commitMsg, parts){
   const rand = (self.crypto?.getRandomValues
     ? (()=>{ const u32 = new Uint32Array(1); self.crypto.getRandomValues(u32); return u32[0].toString(36).slice(0,6); })()
     : Math.random().toString(36).slice(2,8));
-
-  // 目录分层：<dir>/<YYYY>/<MM>/<DD>/snip-YYYYMMDD-HHMMSS-mmm-rand.md
   const fileName = `snip-${yyyy}${mm}${dd}-${HH}${mi}${ss}-${ms}-${rand}.md`;
   const path = `${cfg.dir}${yyyy}/${mm}/${dd}/${fileName}`.replace(/\/+/g,'/');
-
   await githubPutFile(cfg, path, entry, undefined, commitMsg);
 }
-
-/** 关键2：旧模式的“日/小时文件追加”，带 409 退避重试 */
 async function safeAppendToFile(cfg, path, appendedContent, commitMsg){
   const MAX_RETRY = 5;
   for(let attempt=1; attempt<=MAX_RETRY; attempt++){
-    const existing = await githubGetFile(cfg, path); // 可能为 null（首次创建）
+    const existing = await githubGetFile(cfg, path);
     const header = '# Collected Snippets\n';
     const base = existing?.contentStr ?? header;
     const newContent = (base.endsWith('\n') ? base : base + '\n') + appendedContent;
@@ -526,22 +525,15 @@ async function safeAppendToFile(cfg, path, appendedContent, commitMsg){
       await githubPutFile(cfg, path, newContent, existing?.sha, commitMsg);
       return;
     }catch(e){
-      // 仅对 409/二级限额(403/429且包含重试头)做退避
-      if(e.status === 409){
-        await sleep(150 * attempt + Math.random()*300);
-        continue;
-      }
-      if((e.status===403 || e.status===429) && e.retryAfterMs){
-        await sleep(e.retryAfterMs + Math.random()*300);
-        continue;
-      }
+      if(e.status === 409){ await sleep(150 * attempt + Math.random()*300); continue; }
+      if((e.status===403 || e.status===429) && e.retryAfterMs){ await sleep(e.retryAfterMs + Math.random()*300); continue; }
       throw e;
     }
   }
   throw new Error('多次重试后仍 409：并发写入过多或分支受保护。可切换“每条片段单独新文件”或改用不受保护的分支。');
 }
 
-/** ================== 设置（localStorage 持久化） ================== */
+/** 设置 */
 [openSettingsBtn, openSettingsTop].forEach(b=>b.addEventListener('click', openSettings));
 btnCancel.addEventListener('click', closeSettings);
 backdrop.addEventListener('click', closeSettings);
@@ -592,17 +584,14 @@ function loadSettings(){
   elBranch.value = localStorage.getItem('gh_branch') || 'main';
   elDir.value    = localStorage.getItem('gh_dir')    || 'snippets/';
   elFile.value   = localStorage.getItem('gh_file')   || '';
-
-  // 默认开启“每条片段单独文件”，关闭“按小时切分”
   const per = localStorage.getItem('gh_per_snippet');
   const hr  = localStorage.getItem('gh_split_hour');
   elPerSnippet.checked = per === null ? true : per === '1';
   elSplitHour.checked  = hr  === null ? false: hr  === '1';
 }
 
-/** ================== GitHub API ================== */
+/** GitHub API */
 const GH_API = 'https://api.github.com';
-
 async function githubGetFile(cfg, path){
   const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`;
   const res = await fetch(url,{headers:{
@@ -623,7 +612,6 @@ async function githubGetFile(cfg, path){
   const contentStr = b64Decode(json.content||'');
   return { sha: json.sha, contentStr };
 }
-
 async function githubPutFile(cfg, path, contentStr, sha, message){
   const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}`;
   const body = { message: message || 'update file', content: b64Encode(contentStr), branch: cfg.branch };
@@ -654,7 +642,6 @@ async function githubPutFile(cfg, path, contentStr, sha, message){
   }
   return res.json();
 }
-
 function addRateLimitMeta(err, res){
   const ra = res.headers.get('retry-after');
   if(ra){
@@ -667,39 +654,41 @@ function addRateLimitMeta(err, res){
   if(rlReset!==null) err.rateReset = rlReset;
 }
 
-/** Base64 UTF-8 */
+/** Base64 / 工具 */
 function b64Encode(str){ const bytes=new TextEncoder().encode(str); let bin=''; bytes.forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin); }
 function b64Decode(b64){ const bin=atob((b64||'').replace(/\n/g,'')); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
-
 function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
 
-/** ================== 选区浮条状态 ================== */
+/** 选区浮条 & 按钮状态 */
 function handleSelectionChange(){
   const txt = getSelectedText();
 
-  // 浮条显隐与定位（仅右侧区域）
   if (!txt){ hide(toolbar); }
   else {
     try{
       const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
-      const top = rect.top + window.scrollY;
+      const top  = rect.top + window.scrollY;
       const left = rect.left + rect.width/2 + window.scrollX;
       toolbar.style.top = `${top}px`;
       toolbar.style.left = `${left}px`;
       show(toolbar);
     }catch{ hide(toolbar); }
   }
-
-  // 固定按钮的可用状态与文案
   saveSelectionBtn.disabled = !txt || _savingFlag;
   saveSnippetBtn.disabled   = !txt || _savingFlag;
   saveSelectionBtn.innerText = txt ? `保存选中（${txt.length}字）` : '保存选中';
 }
 
-/** ================== 初始化 ================== */
+/** UI 辅助 */
 function toast(msg, ms=2200){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), ms); }
+function openSettings(){ show(backdrop); show(modal); }
+function closeSettings(){ hide(modal); hide(backdrop); }
+function show(el){ el.classList.remove('hidden'); }
+function hide(el){ el.classList.add('hidden'); }
+
+/** 初始化 */
 window.onload = ()=>{
-  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；<b>右侧选中文本</b>后，上方「保存选中」按钮会亮起，也会出现悬浮条。<br>为避免 409 并发冲突，默认启用「每条片段单独创建新文件」。可在设置中切换为“日/小时文件追加”。</p>';
+  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；<b>右侧选中文本</b>后，上方「保存选中」按钮会亮起，也会出现悬浮条。<br>iPad 已修复：现支持长按选择后保存。</p>';
   loadSettings();
   updateCfgBadge();
 };
