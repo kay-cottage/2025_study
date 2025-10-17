@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>Markdown 特效转换器 · 选中即存 GitHub · 文件/链接导入（修复可见保存入口）</title>
+<title>Markdown 特效转换器 · 选中即存 GitHub · 文件/链接导入（409修复·支持“单片段单文件/按小时切分”）</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
   :root{
@@ -18,7 +18,7 @@
   h2{margin:0 0 8px 0;font-size:18px}
   .subtle{color:var(--muted);font-size:12px}
 
-  /* 导入卡片（美化） */
+  /* 导入卡片 */
   .import-card{border:1px dashed var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#fafbff,transparent)}
   .import-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .input-group{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:280px;background:#fff}
@@ -56,11 +56,15 @@
   .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998}
   .modal{
     position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-    width:min(560px,92vw);background:#fff;padding:16px;border-radius:14px;
+    width:min(650px,92vw);background:#fff;padding:16px;border-radius:14px;
     box-shadow:0 20px 60px rgba(0,0,0,.35);z-index:9999
   }
-  .grid{display:grid;grid-template-columns:140px 1fr;gap:10px 12px;align-items:center}
-  .grid input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}
+  .grid{display:grid;grid-template-columns:160px 1fr;gap:10px 12px;align-items:center}
+  .grid input[type="text"], .grid input[type="password"]{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}
+  .grid .row-span{grid-column:1 / -1}
+  .grid .switches{display:flex;flex-wrap:wrap;gap:10px}
+  .switch{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:#f9fafb}
+  .switch input{transform:scale(1.15)}
   .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
 
   /* toast */
@@ -121,7 +125,7 @@
       <button id="download-btn" class="btn btn-ghost" type="button">下载 HTML</button>
       <button id="open-settings-top" class="btn btn-ghost" type="button">设置（GitHub）</button>
 
-      <!-- 新增：固定的、可见的保存按钮（当有选区时自动亮起） -->
+      <!-- 固定可见的保存按钮（有选区时亮起） -->
       <button id="save-selection-btn" class="btn btn-primary" type="button" disabled title="先在右侧选中文字">
         <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
         保存选中
@@ -133,7 +137,7 @@
   </section>
 </div>
 
-<!-- 选区浮条（保留） -->
+<!-- 选区浮条 -->
 <div id="sel-toolbar" class="sel-toolbar hidden">
   <button id="save-snippet-btn" class="btn btn-primary" type="button">
     <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
@@ -156,10 +160,16 @@
     <label for="gh-branch">Branch</label>
     <input id="gh-branch" type="text" placeholder="main（默认）" />
     <label for="gh-dir">目录*</label>
-    <input id="gh-dir" type="text" placeholder="notes/ 或 snippets/" />
-    <label for="gh-file">文件名</label>
-    <input id="gh-file" type="text" placeholder="snippets.md（留空则按日期自动生成）" />
-    <div class="subtle" style="grid-column:1 / -1">参数存于 localStorage（仅本浏览器）。请使用最小权限 Token。</div>
+    <input id="gh-dir" type="text" placeholder="snippets/（建议专用目录）" />
+    <label for="gh-file">文件名（可留空）</label>
+    <input id="gh-file" type="text" placeholder="snippets.md（留空则按日期/小时生成）" />
+    <div class="row-span">
+      <div class="switches">
+        <label class="switch"><input id="gh-per-snippet" type="checkbox"> 每条片段单独创建新文件（推荐，几乎杜绝409）</label>
+        <label class="switch"><input id="gh-split-hour" type="checkbox"> 追加模式下按小时切分文件名（YYYY-MM-DD-HH.md）</label>
+      </div>
+    </div>
+    <div class="subtle row-span">参数存于 localStorage（仅本浏览器）。建议使用不受保护的分支（如 <code>snippets</code>）。</div>
   </div>
   <div class="actions">
     <button class="btn btn-ghost" id="cancel-settings" type="button">取消</button>
@@ -201,6 +211,9 @@ const elRepo   = document.getElementById('gh-repo');
 const elBranch = document.getElementById('gh-branch');
 const elDir    = document.getElementById('gh-dir');
 const elFile   = document.getElementById('gh-file');
+const elPerSnippet = document.getElementById('gh-per-snippet');
+const elSplitHour  = document.getElementById('gh-split-hour');
+
 const btnCancel= document.getElementById('cancel-settings');
 const btnSave  = document.getElementById('save-settings');
 
@@ -262,7 +275,7 @@ function downloadHTML(){
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-/** ================== 导入：文件 ================== */
+/** ================== 导入：文件/拖拽 ================== */
 uploadBtn.addEventListener('click',()=>fileInput.click());
 fileInput.addEventListener('change', async (e)=>{
   const file = e.target.files?.[0]; if(!file) return;
@@ -367,20 +380,13 @@ async function fetchMarkdownFromUrl(url, token){
 loadSettings(); // 先读本地配置
 document.addEventListener('mouseup', handleSelectionChange);
 document.addEventListener('keyup', handleSelectionChange);
-document.addEventListener('selectionchange', handleSelectionChange); // 让固定按钮随选区实时亮起
+document.addEventListener('selectionchange', handleSelectionChange);
 document.addEventListener('scroll', ()=>hide(toolbar), true);
 window.addEventListener('resize', ()=>hide(toolbar));
 
-// 固定按钮点击：与浮条保存共享同一逻辑
-saveSelectionBtn.addEventListener('click', async ()=>{
-  await doSaveCurrentSelection();
-});
-// 浮条按钮点击
-saveSnippetBtn.addEventListener('click', async ()=>{
-  await doSaveCurrentSelection();
-});
+saveSelectionBtn.addEventListener('click', async ()=>{ await doSaveCurrentSelection(); });
+saveSnippetBtn.addEventListener('click', async ()=>{ await doSaveCurrentSelection(); });
 
-// 支持快捷键：Ctrl/Cmd + S 保存选中
 document.addEventListener('keydown', async (e)=>{
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){
     e.preventDefault();
@@ -388,47 +394,151 @@ document.addEventListener('keydown', async (e)=>{
   }
 });
 
-function getSelectedText(){
+/** 仅允许右侧预览区域的选中触发保存 */
+function selectionInsideOutput(){
   const sel = window.getSelection();
-  if(!sel || sel.isCollapsed) return '';
+  if(!sel || sel.rangeCount===0 || sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  let node = range.commonAncestorContainer;
+  while(node){
+    if(node===htmlOutput) return true;
+    node = node.parentNode;
+  }
+  return false;
+}
+function getSelectedText(){
+  if(!selectionInsideOutput()) return '';
+  const sel = window.getSelection();
   return sel.toString().trim();
 }
 
+/** =========== 写入串行化锁 & 轻节流 & 重试（核心修复） =========== */
+const writeQueues = new Map(); // path -> Promise 链
+function withWriteLock(path, task){
+  const prev = writeQueues.get(path) || Promise.resolve();
+  const next = prev.then(task).finally(()=>{
+    if(writeQueues.get(path) === next) writeQueues.delete(path);
+  });
+  writeQueues.set(path, next);
+  return next;
+}
+const sleep = (ms)=> new Promise(r=>setTimeout(r, ms));
+let _savingFlag = false;
+let _lastSaveTs = 0;
+const MIN_INTERVAL_MS = 400; // 轻节流：两次保存至少间隔 400ms
+
 async function doSaveCurrentSelection(){
+  const nowTs = Date.now();
+  if (nowTs - _lastSaveTs < MIN_INTERVAL_MS) { toast('操作过快，稍等一下…'); return; }
   const cfg = getConfig();
   if(!cfg.token || !cfg.owner || !cfg.repo || !cfg.dir){ openSettings(); return; }
+
   const text = getSelectedText();
   if(!text){ toast('请先在右侧预览中选中文本'); return; }
+
+  if(_savingFlag) return; // 防连点
+  _savingFlag = true;
+  saveSelectionBtn.disabled = true; saveSnippetBtn.disabled = true;
+
   try{
-    await appendSelectionToGitHub(text, cfg);
+    const now = new Date();
+    const timeStr = new Intl.DateTimeFormat('zh-CN',{
+      timeZone:'Europe/Berlin', year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
+    }).format(now).replace(/\//g,'-');
+
+    const sourceTitle = (sourceOverride?.title) ? sourceOverride.title : (document.title || 'Untitled Page');
+    const sourceUrl   = (sourceOverride?.url)   ? sourceOverride.url   : location.href;
+
+    const entry = `
+
+---
+**Time:** ${timeStr} (Europe/Berlin)  
+**Source:** [${escapeMd(sourceTitle)}](${sourceUrl})
+
+> ${escapeMd(text).replace(/\n/g,'\n> ')}
+`;
+
+    const tz = 'Europe/Berlin';
+    const yyyy = new Intl.DateTimeFormat('en-CA',{timeZone:tz, year:'numeric'}).format(now);
+    const mm   = new Intl.DateTimeFormat('en-CA',{timeZone:tz, month:'2-digit'}).format(now);
+    const dd   = new Intl.DateTimeFormat('en-CA',{timeZone:tz, day:'2-digit'}).format(now);
+    const HH   = String(now.getHours()).padStart(2,'0');
+
+    if (getConfig().perSnippet){
+      // 方案B（推荐）：每条片段新文件（几乎杜绝409）
+      await saveAsNewFile(getConfig(), entry, `save snippet @ ${timeStr}`, {yyyy,mm,dd,HH});
+    } else {
+      // 方案A：单文件追加（可能409，已做串行 + 退避）
+      const fileName = (getConfig().file && getConfig().file.trim())
+        ? getConfig().file.trim()
+        : (getConfig().splitHour ? `${yyyy}-${mm}-${dd}-${HH}.md` : `${yyyy}-${mm}-${dd}.md`);
+      const path = getConfig().dir + fileName;
+      await withWriteLock(path, async () => {
+        await safeAppendToFile(getConfig(), path, entry, `append snippet @ ${timeStr}`);
+      });
+    }
+
+    _lastSaveTs = Date.now();
     toast('已保存到 GitHub ✅');
     hide(toolbar);
     const sel = window.getSelection(); sel && sel.removeAllRanges();
-    handleSelectionChange(); // 立刻刷新按钮禁用状态
+    handleSelectionChange();
+
   }catch(err){
-    toast('保存失败：'+(err?.message||'未知错误'));
+    const extra = err?.detail ? `\n${String(err.detail).slice(0,180)}` : '';
+    toast('保存失败：'+(err?.message||'未知错误')+extra);
+  }finally{
+    _savingFlag = false;
+    saveSelectionBtn.disabled = !getSelectedText();
+    saveSnippetBtn.disabled = !getSelectedText();
   }
 }
 
-function handleSelectionChange(){
-  const txt = getSelectedText();
+/** 关键1：每条片段独立新文件（不传 sha，避免并发冲突） */
+async function saveAsNewFile(cfg, entry, commitMsg, parts){
+  const {yyyy,mm,dd,HH} = parts;
+  const d2 = (n)=>String(n).padStart(2,'0');
+  const now = new Date();
+  const mi = d2(now.getMinutes()), ss=d2(now.getSeconds());
+  const ms = String(now.getMilliseconds()).padStart(3,'0');
+  const rand = (self.crypto?.getRandomValues
+    ? (()=>{ const u32 = new Uint32Array(1); self.crypto.getRandomValues(u32); return u32[0].toString(36).slice(0,6); })()
+    : Math.random().toString(36).slice(2,8));
 
-  // 浮条显隐与定位
-  if (!txt){ hide(toolbar); }
-  else {
+  // 目录分层：<dir>/<YYYY>/<MM>/<DD>/snip-YYYYMMDD-HHMMSS-mmm-rand.md
+  const fileName = `snip-${yyyy}${mm}${dd}-${HH}${mi}${ss}-${ms}-${rand}.md`;
+  const path = `${cfg.dir}${yyyy}/${mm}/${dd}/${fileName}`.replace(/\/+/g,'/');
+
+  await githubPutFile(cfg, path, entry, undefined, commitMsg);
+}
+
+/** 关键2：旧模式的“日/小时文件追加”，带 409 退避重试 */
+async function safeAppendToFile(cfg, path, appendedContent, commitMsg){
+  const MAX_RETRY = 5;
+  for(let attempt=1; attempt<=MAX_RETRY; attempt++){
+    const existing = await githubGetFile(cfg, path); // 可能为 null（首次创建）
+    const header = '# Collected Snippets\n';
+    const base = existing?.contentStr ?? header;
+    const newContent = (base.endsWith('\n') ? base : base + '\n') + appendedContent;
+
     try{
-      const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
-      const top = rect.top + window.scrollY;
-      const left = rect.left + rect.width/2 + window.scrollX;
-      toolbar.style.top = `${top}px`;
-      toolbar.style.left = `${left}px`;
-      show(toolbar);
-    }catch{ hide(toolbar); }
+      await githubPutFile(cfg, path, newContent, existing?.sha, commitMsg);
+      return;
+    }catch(e){
+      // 仅对 409/二级限额(403/429且包含重试头)做退避
+      if(e.status === 409){
+        await sleep(150 * attempt + Math.random()*300);
+        continue;
+      }
+      if((e.status===403 || e.status===429) && e.retryAfterMs){
+        await sleep(e.retryAfterMs + Math.random()*300);
+        continue;
+      }
+      throw e;
+    }
   }
-
-  // 固定按钮的可用状态与文案
-  saveSelectionBtn.disabled = !txt;
-  saveSelectionBtn.innerText = txt ? `保存选中（${txt.length}字）` : '保存选中';
+  throw new Error('多次重试后仍 409：并发写入过多或分支受保护。可切换“每条片段单独新文件”或改用不受保护的分支。');
 }
 
 /** ================== 设置（localStorage 持久化） ================== */
@@ -459,8 +569,10 @@ function getConfig(){
     owner:  localStorage.getItem('gh_owner')  || elOwner.value.trim(),
     repo:   localStorage.getItem('gh_repo')   || elRepo.value.trim(),
     branch: localStorage.getItem('gh_branch') || elBranch.value.trim() || 'main',
-    dir:    (localStorage.getItem('gh_dir')   || elDir.value.trim() || '').replace(/^\/+/, '').replace(/\/?$/, '/'),
+    dir:    (localStorage.getItem('gh_dir')   || elDir.value.trim() || 'snippets/').replace(/^\/+/, '').replace(/\/?$/, '/'),
     file:   localStorage.getItem('gh_file')   || elFile.value.trim(),
+    perSnippet: (localStorage.getItem('gh_per_snippet') ?? (elPerSnippet.checked ? '1':'')).toString() === '1',
+    splitHour:  (localStorage.getItem('gh_split_hour')  ?? (elSplitHour.checked  ? '1':'')).toString() === '1',
   };
 }
 function saveSettings(){
@@ -470,86 +582,124 @@ function saveSettings(){
   localStorage.setItem('gh_branch', elBranch.value.trim() || 'main');
   localStorage.setItem('gh_dir',    elDir.value.trim());
   localStorage.setItem('gh_file',   elFile.value.trim());
+  localStorage.setItem('gh_per_snippet', elPerSnippet.checked ? '1':'0');
+  localStorage.setItem('gh_split_hour',  elSplitHour.checked  ? '1':'0');
 }
 function loadSettings(){
   elToken.value  = localStorage.getItem('gh_token')  || '';
   elOwner.value  = localStorage.getItem('gh_owner')  || '';
   elRepo.value   = localStorage.getItem('gh_repo')   || '';
   elBranch.value = localStorage.getItem('gh_branch') || 'main';
-  elDir.value    = localStorage.getItem('gh_dir')    || '';
+  elDir.value    = localStorage.getItem('gh_dir')    || 'snippets/';
   elFile.value   = localStorage.getItem('gh_file')   || '';
+
+  // 默认开启“每条片段单独文件”，关闭“按小时切分”
+  const per = localStorage.getItem('gh_per_snippet');
+  const hr  = localStorage.getItem('gh_split_hour');
+  elPerSnippet.checked = per === null ? true : per === '1';
+  elSplitHour.checked  = hr  === null ? false: hr  === '1';
 }
-
-/** ================== Snippet 追加上传 ================== */
-async function appendSelectionToGitHub(selectedText, cfg){
-  const now = new Date();
-  const timeStr = new Intl.DateTimeFormat('zh-CN',{
-    timeZone:'Europe/Berlin', year:'numeric', month:'2-digit', day:'2-digit',
-    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
-  }).format(now).replace(/\//g,'-');
-
-  // 若有导入来源，则写进 Source；否则使用页面标题与 URL
-  const sourceTitle = (sourceOverride?.title) ? sourceOverride.title : (document.title || 'Untitled Page');
-  const sourceUrl   = (sourceOverride?.url)   ? sourceOverride.url   : location.href;
-
-  const entry = `
-
----
-**Time:** ${timeStr} (Europe/Berlin)  
-**Source:** [${escapeMd(sourceTitle)}](${sourceUrl})
-
-> ${escapeMd(selectedText).replace(/\n/g,'\n> ')}
-`;
-
-  const yyyy = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin', year:'numeric', month:'2-digit', day:'2-digit'}).format(now);
-  const fileName = (cfg.file && cfg.file.trim()) ? cfg.file.trim() : `${yyyy}.md`;
-  const path = cfg.dir + fileName;
-
-  const existing = await githubGetFile(cfg, path); // {sha, contentStr} | null
-  const header = '# Collected Snippets\n';
-  const newContent = (existing?.contentStr ? existing.contentStr : header) + entry;
-
-  await githubPutFile(cfg, path, newContent, existing?.sha, `append snippet from page @ ${timeStr}`);
-}
-function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
 
 /** ================== GitHub API ================== */
 const GH_API = 'https://api.github.com';
+
 async function githubGetFile(cfg, path){
   const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`;
-  const res = await fetch(url,{headers:{'Accept':'application/vnd.github+json','Authorization':`Bearer ${cfg.token}`,'X-GitHub-Api-Version':'2022-11-28'}});
+  const res = await fetch(url,{headers:{
+    'Accept':'application/vnd.github+json',
+    'Authorization':`Bearer ${cfg.token}`,
+    'X-GitHub-Api-Version':'2022-11-28'
+  }});
   if(res.status===404) return null;
   if(!res.ok){
     const txt=await res.text();
-    throw new Error(`读取文件失败 (${res.status}): ${txt}`);
+    const err = new Error(`读取文件失败 (${res.status})`);
+    err.status = res.status;
+    err.detail = txt;
+    addRateLimitMeta(err, res);
+    throw err;
   }
   const json = await res.json();
   const contentStr = b64Decode(json.content||'');
   return { sha: json.sha, contentStr };
 }
+
 async function githubPutFile(cfg, path, contentStr, sha, message){
   const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}`;
   const body = { message: message || 'update file', content: b64Encode(contentStr), branch: cfg.branch };
   if (sha) body.sha = sha;
-  const res = await fetch(url,{method:'PUT',headers:{'Accept':'application/vnd.github+json','Authorization':`Bearer ${cfg.token}`,'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json'},body:JSON.stringify(body)});
+  const res = await fetch(url,{
+    method:'PUT',
+    headers:{
+      'Accept':'application/vnd.github+json',
+      'Authorization':`Bearer ${cfg.token}`,
+      'X-GitHub-Api-Version':'2022-11-28',
+      'Content-Type':'application/json'
+    },
+    body:JSON.stringify(body)
+  });
   if(!res.ok){
     const txt = await res.text();
-    if(res.status===401) throw new Error('401 未授权：Token无效或权限不足');
-    if(res.status===403) throw new Error('403 被拒绝：Token权限或速率限制问题');
-    if(res.status===404) throw new Error('404 未找到：仓库/分支/路径可能错误');
-    if(res.status===409) throw new Error('409 冲突：分支/sha 冲突，可稍后重试');
-    throw new Error(`保存失败 (${res.status}): ${txt}`);
+    const err = new Error(
+      res.status===401 ? '401 未授权：Token无效或权限不足' :
+      res.status===403 ? '403 被拒绝：分支保护/权限/速率限制' :
+      res.status===404 ? '404 未找到：仓库/分支/路径可能错误' :
+      res.status===409 ? '409 冲突：分支/sha 冲突（并发写入/sha过期）' :
+      `保存失败 (${res.status})`
+    );
+    err.status = res.status;
+    err.detail = txt;
+    addRateLimitMeta(err, res);
+    throw err;
   }
   return res.json();
 }
+
+function addRateLimitMeta(err, res){
+  const ra = res.headers.get('retry-after');
+  if(ra){
+    const ms = /^\d+$/.test(ra) ? parseInt(ra,10)*1000 : 0;
+    if(ms>0) err.retryAfterMs = ms;
+  }
+  const rlRem = res.headers.get('x-ratelimit-remaining');
+  const rlReset = res.headers.get('x-ratelimit-reset');
+  if(rlRem!==null) err.rateRemaining = rlRem;
+  if(rlReset!==null) err.rateReset = rlReset;
+}
+
 /** Base64 UTF-8 */
 function b64Encode(str){ const bytes=new TextEncoder().encode(str); let bin=''; bytes.forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin); }
 function b64Decode(b64){ const bin=atob((b64||'').replace(/\n/g,'')); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
 
+function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
+
+/** ================== 选区浮条状态 ================== */
+function handleSelectionChange(){
+  const txt = getSelectedText();
+
+  // 浮条显隐与定位（仅右侧区域）
+  if (!txt){ hide(toolbar); }
+  else {
+    try{
+      const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
+      const top = rect.top + window.scrollY;
+      const left = rect.left + rect.width/2 + window.scrollX;
+      toolbar.style.top = `${top}px`;
+      toolbar.style.left = `${left}px`;
+      show(toolbar);
+    }catch{ hide(toolbar); }
+  }
+
+  // 固定按钮的可用状态与文案
+  saveSelectionBtn.disabled = !txt || _savingFlag;
+  saveSnippetBtn.disabled   = !txt || _savingFlag;
+  saveSelectionBtn.innerText = txt ? `保存选中（${txt.length}字）` : '保存选中';
+}
+
 /** ================== 初始化 ================== */
-function toast(msg, ms=2000){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), ms); }
+function toast(msg, ms=2200){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), ms); }
 window.onload = ()=>{
-  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；<b>右侧选中文本</b>后，上方「保存选中」按钮会亮起，也会出现悬浮条，可任意入口保存到 GitHub。</p>';
+  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；<b>右侧选中文本</b>后，上方「保存选中」按钮会亮起，也会出现悬浮条。<br>为避免 409 并发冲突，默认启用「每条片段单独创建新文件」。可在设置中切换为“日/小时文件追加”。</p>';
   loadSettings();
   updateCfgBadge();
 };
