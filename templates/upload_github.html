@@ -24,7 +24,7 @@
   .input-group input{border:0;padding:10px 12px;outline:none;width:320px;min-width:160px}
   .input-group .btn{border-left:1px solid var(--line);border-radius:0}
 
-  .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;cursor:pointer;transition:.2s ease;white-space:nowrap}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;cursor:pointer;transition:.2s ease;white-space:nowrap;-webkit-user-select:none;user-select:none}
   .btn svg{width:16px;height:16px}
   .btn-primary{color:#fff;background:linear-gradient(90deg,var(--brand-1),var(--brand-2));box-shadow:0 6px 18px rgba(99,102,241,.25)}
   .btn-primary:hover{transform:translateY(-1px);filter:brightness(1.05)}
@@ -39,9 +39,11 @@
   .toolbar{display:flex;gap:8px;align-items:center;margin:8px 0 12px 0;flex-wrap:wrap}
   #html-output{flex:1;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;overflow:auto}
 
-  /* iOS: 允许选中文本与系统选择菜单 */
-  #html-output, #html-output * { -webkit-user-select:text; user-select:text; -webkit-touch-callout:text; }
-  .toolbar, #sel-toolbar, .btn, button { -webkit-user-select:none; user-select:none; }
+  /* iOS: 允许选中文本与系统选择菜单（注意 default 才是合法值） */
+  #html-output, #html-output * { -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
+  /* 避免 iOS 把滚动/捏合手势“吃掉”选择 */
+  #html-output { touch-action: manipulation; }
+
   @media (pointer:coarse){ .word{ touch-action:manipulation; } }
 
   span.word{cursor:pointer;transition:background-color .2s}
@@ -208,7 +210,7 @@ const elSplitHour  = document.getElementById('gh-split-hour');
 const cfgState = document.getElementById('cfg-state');
 const cfgOk    = document.getElementById('cfg-ok');
 
-/** 其它引用（上传/导入，不变） */
+/** 其它引用（上传/导入，不要重复声明） */
 const uploadBtn   = document.getElementById('upload-btn');
 const fileInput   = document.getElementById('file-input');
 const fileNameSpan= document.getElementById('file-name');
@@ -266,7 +268,6 @@ function wrapWords(root){
         span.setAttribute('data-word', part);
         span.setAttribute('data-sentence', sentence);
         span.addEventListener('click', (e)=>{
-          // 若已有跨词/句选区，忽略点击，避免 iOS 清空选区
           if (latestSelection.text && latestSelection.text.length>0) return;
           playWord(e.currentTarget.getAttribute('data-word'));
         });
@@ -285,9 +286,27 @@ function wrapWords(root){
 function playWord(w){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(w); const a=new Audio(url); a.playbackRate=1.3; a.play().catch(()=>{}); }
 function playSentence(s){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(s); const a=new Audio(url); a.playbackRate=1.1; a.play().catch(()=>{}); }
 
-/** ================== 选区侦测（iPad 关键：用快照） ================== */
-function selectionInsideOutput(){
-  const sel = window.getSelection();
+/** ================== iPad 选区“守望者” + 快照 ================== */
+/* 在触发选区的关键节点（touchstart、selectionchange、contextmenu）开启短时轮询，直到抓到非空文本 */
+let selWatchTimer = null;
+function startSelectionWatcher(windowMs=1500, intervalMs=120){
+  stopSelectionWatcher();
+  const t0 = Date.now();
+  selWatchTimer = setInterval(()=>{
+    const sel = window.getSelection();
+    if(sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput(sel)){
+      latestSelection = { text: sel.toString().trim(), range: sel.getRangeAt(0).cloneRange() };
+      updateSaveButtons();
+      stopSelectionWatcher(); // 抓到即可停止
+    }
+    if(Date.now() - t0 > windowMs) stopSelectionWatcher();
+  }, intervalMs);
+}
+function stopSelectionWatcher(){
+  if(selWatchTimer){ clearInterval(selWatchTimer); selWatchTimer=null; }
+}
+
+function selectionInsideOutput(sel){
   if(!sel || sel.rangeCount===0 || sel.isCollapsed) return false;
   const rng = sel.getRangeAt(0);
   const nodeOf = n => n?.nodeType===1 ? n : n?.parentNode;
@@ -297,30 +316,38 @@ function selectionInsideOutput(){
   if (container && htmlOutput.contains(container)) return true;
   if ((start && htmlOutput.contains(start)) || (end && htmlOutput.contains(end))) return true;
   try{
-    const r = rng.getBoundingClientRect();
-    const o = htmlOutput.getBoundingClientRect();
-    const overlap = !(r.right<o.left || r.left>o.right || r.bottom<o.top || r.top>o.bottom);
-    if (overlap) return true;
+    const rect = rng.getBoundingClientRect?.();
+    const o = htmlOutput.getBoundingClientRect?.();
+    if(rect && o){
+      const overlap = !(rect.right<o.left || rect.left>o.right || rect.bottom<o.top || rect.top>o.bottom);
+      if (overlap) return true;
+    }
   }catch{}
   return false;
 }
-// 更新“快照”
-function snapshotSelection(){
+
+function snapshotSelectionNow(){
   const sel = window.getSelection();
-  if(sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput()){
+  if(sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput(sel)){
     latestSelection = { text: sel.toString().trim(), range: sel.getRangeAt(0).cloneRange() };
-  }else{
-    // 不覆盖已有快照（iOS点击按钮会清空实时选区）
+    updateSaveButtons();
   }
-  updateSaveButtons();
 }
-// UI：按钮状态 & 悬浮条位置
+
+document.addEventListener('selectionchange', ()=>{ startSelectionWatcher(1200, 120); });
+htmlOutput.addEventListener('contextmenu', ()=>{ startSelectionWatcher(1200, 120); }, true);
+/* 触控开始就启动守望者，这样在拖动光标/扩大选区期间也能抓住 */
+['touchstart','touchmove','touchend'].forEach(ev=>{
+  htmlOutput.addEventListener(ev, ()=>{ startSelectionWatcher(1500, 120); }, {passive:true});
+});
+
+/** ================== 悬浮条 UI & 按钮状态 ================== */
 function updateSaveButtons(){
   const has = !!(latestSelection.text && latestSelection.text.length>0);
   saveSelectionBtn.disabled = !has || _savingFlag;
   saveSnippetBtn.disabled   = !has || _savingFlag;
   saveSelectionBtn.innerText = has ? `保存选中（${latestSelection.text.length}字）` : '保存选中';
-  if (has){
+  if (has && latestSelection.range){
     try{
       const r = latestSelection.range.getBoundingClientRect();
       const top  = r.top + window.scrollY;
@@ -333,38 +360,30 @@ function updateSaveButtons(){
     hide(toolbar);
   }
 }
-let rafSel = 0;
-function scheduleSnapshot(){ cancelAnimationFrame(rafSel); rafSel = requestAnimationFrame(snapshotSelection); }
-// iOS：在 selectionchange / touch 之后延迟一帧再读选区
-document.addEventListener('selectionchange', scheduleSnapshot, false);
-document.addEventListener('mouseup', scheduleSnapshot, false);
-document.addEventListener('keyup', scheduleSnapshot, false);
-['touchstart','touchend'].forEach(ev=>document.addEventListener(ev, ()=>setTimeout(snapshotSelection,0), true));
 document.addEventListener('scroll', ()=>hide(toolbar), true);
 window.addEventListener('resize', ()=>hide(toolbar));
 
-/** ================== 保存按钮绑定（触控下优先 touchend） ================== */
-let handledTouchSave = false;
+/** ================== 保存按钮绑定（iPad 关键：用 touchstart，更早于清空选区） ================== */
 function bindSaveButton(btn){
-  // 触控：在 touchend 立即保存并阻止后续 click
-  btn.addEventListener('touchend', (e)=>{
-    handledTouchSave = true;
-    e.preventDefault();
+  // 触控：在 touchstart 立即保存并阻止后续 click
+  btn.addEventListener('touchstart', (e)=>{
+    e.preventDefault(); // 阻止 iOS 把触摸当作新的点按从而丢失选区
     doSaveCurrentSelection();
-    setTimeout(()=>handledTouchSave=false, 400);
   }, {passive:false});
-  // 桌面或非触控：走 click；触控已处理则拦截
+
+  // 桌面：click
   btn.addEventListener('click', (e)=>{
-    if (isTouch && handledTouchSave){ e.preventDefault(); return; }
+    if (isTouch) return; // 触控已处理
     doSaveCurrentSelection();
   });
-  // 防止 mousedown 抢焦点导致选区丢失（桌面）
+
+  // 桌面防止 mousedown 抢焦点导致选区丢失
   btn.addEventListener('mousedown', (e)=>{ e.preventDefault(); }, {passive:false});
 }
 bindSaveButton(saveSelectionBtn);
 bindSaveButton(saveSnippetBtn);
 
-/** ================== 保存主流程（优先用快照文本） ================== */
+/** ================== 保存主流程（带兜底读取系统选区） ================== */
 const MIN_INTERVAL_MS = 400;
 let _savingFlag = false;
 let _lastSaveTs = 0;
@@ -375,8 +394,16 @@ async function doSaveCurrentSelection(){
   const cfg = getConfig();
   if(!cfg.token || !cfg.owner || !cfg.repo || !cfg.dir){ openSettings(); return; }
 
+  // 兜底：快照为空时再尝试从系统选区直接读取一次（同步）
+  if(!latestSelection.text){
+    snapshotSelectionNow();
+  }
   const text = latestSelection.text || '';
-  if(!text){ toast('请先在右侧预览文本中选择！'); return; }
+
+  if(!text){
+    toast('请先在右侧预览文本中选择！');
+    return;
+  }
 
   if(_savingFlag) return;
   _savingFlag = true;
@@ -421,7 +448,7 @@ async function doSaveCurrentSelection(){
 
     _lastSaveTs = Date.now();
     toast('已保存到 GitHub ✅');
-    // 不强制清空快照——允许连续保存同一选区（如果需要可手动改）
+    // 不清空快照，允许连续保存同一段
   }catch(err){
     const extra = err?.detail ? `\n${String(err.detail).slice(0,180)}` : '';
     toast('保存失败：'+(err?.message||'未知错误')+extra);
@@ -431,7 +458,7 @@ async function doSaveCurrentSelection(){
   }
 }
 
-/** ================== 文件/链接导入（与之前一致） ================== */
+/** ================== 文件/链接导入 ================== */
 uploadBtn.addEventListener('click',()=>fileInput.click());
 fileInput.addEventListener('change', async (e)=>{
   const file = e.target.files?.[0]; if(!file) return;
@@ -471,8 +498,6 @@ dropzone.addEventListener('drop', async (e)=>{
   }catch{ toast('读取文件失败'); }
 });
 
-const importUrlBtn = document.getElementById('import-url-btn');
-const urlInput = document.getElementById('md-url');
 importUrlBtn.addEventListener('click', importFromUrl);
 urlInput.addEventListener('keydown', e=>{ if(e.key==='Enter') importFromUrl(); });
 async function importFromUrl(){
@@ -577,10 +602,9 @@ async function safeAppendToFile(cfg, path, appendedContent, commitMsg){
 }
 
 /** ================== 设置存取 ================== */
-const openSettingsTopEl = document.getElementById('open-settings-top');
 const btnCancel = document.getElementById('cancel-settings');
 const btnSave   = document.getElementById('save-settings');
-[openSettingsBtn, openSettingsTopEl].forEach(b=>b.addEventListener('click', openSettings));
+[openSettingsBtn, openSettingsTop].forEach(b=>b.addEventListener('click', openSettings));
 btnCancel.addEventListener('click', closeSettings);
 backdrop.addEventListener('click', closeSettings);
 btnSave.addEventListener('click', ()=>{
@@ -590,12 +614,13 @@ btnSave.addEventListener('click', ()=>{
   toast('设置已保存');
 });
 function getConfig(){
+  const dirRaw = (localStorage.getItem('gh_dir') || elDir.value.trim() || 'snippets/');
   return {
     token:  localStorage.getItem('gh_token')  || elToken.value.trim(),
     owner:  localStorage.getItem('gh_owner')  || elOwner.value.trim(),
     repo:   localStorage.getItem('gh_repo')   || elRepo.value.trim(),
     branch: localStorage.getItem('gh_branch') || elBranch.value.trim() || 'main',
-    dir:    (localStorage.getItem('gh_dir')   || elDir.value.trim() || 'snippets/').replace(/^\/+/, '').replace(/\/?$/, '/'),
+    dir:    dirRaw.replace(/^\/+/, '').replace(/\/?$/, '/') || 'snippets/',
     file:   localStorage.getItem('gh_file')   || elFile.value.trim(),
     perSnippet: (localStorage.getItem('gh_per_snippet') ?? (elPerSnippet.checked ? '1':'')).toString() === '1',
     splitHour:  (localStorage.getItem('gh_split_hour')  ?? (elSplitHour.checked  ? '1':'')).toString() === '1',
@@ -626,8 +651,6 @@ function loadSettings(){
 function updateCfgBadge(){
   const cfg = getConfig();
   const ok = !!(cfg.token && cfg.owner && cfg.repo && cfg.dir);
-  const cfgState = document.getElementById('cfg-state');
-  const cfgOk    = document.getElementById('cfg-ok');
   cfgState.textContent = ok ? '已配置' : '未配置';
   cfgState.className = 'pill ' + (ok?'ok-pill':'');
   cfgOk?.classList?.toggle?.('hidden', !ok);
@@ -708,7 +731,7 @@ function b64Decode(b64){ const bin=atob((b64||'').replace(/\n/g,'')); const len=
 function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
 
 window.onload = ()=>{
-  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；右侧<b>长按选择</b>后点「保存选中」。<br>iPad 已修复：按钮不会清空选区；若仍无反应，请先单击一下右侧文本再长按选择。</p>';
+  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；右侧<b>长按选择</b>后点「保存选中」。<br>iPad 修复版：按钮不会清空选区；若仍无反应，请先单击一下右侧文本再长按选择。</p>';
   loadSettings();
   updateCfgBadge();
 };
