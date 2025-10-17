@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Markdown 特效转换器 · 选中即存 GitHub · 文件/链接导入（修复可见保存入口）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+  :root{
+    --bg:#f5f7fb;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+    --brand-1:#6366f1;--brand-2:#7c3aed;--accent:#22c55e;--danger:#ef4444;--shadow:0 10px 30px rgba(17,24,39,.08);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .container{display:flex;gap:16px;padding:16px;height:100vh}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:16px;overflow:auto}
+  .left{width:48%;min-width:320px;display:flex;flex-direction:column;gap:12px}
+  .right{flex:1;display:flex;flex-direction:column}
+  h2{margin:0 0 8px 0;font-size:18px}
+  .subtle{color:var(--muted);font-size:12px}
+
+  /* 导入卡片（美化） */
+  .import-card{border:1px dashed var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#fafbff,transparent)}
+  .import-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .input-group{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:280px;background:#fff}
+  .input-group input{border:0;padding:10px 12px;outline:none;width:320px;min-width:160px}
+  .input-group .btn{border-left:1px solid var(--line);border-radius:0}
+
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;cursor:pointer;transition:.2s ease;white-space:nowrap}
+  .btn svg{width:16px;height:16px}
+  .btn-primary{color:#fff;background:linear-gradient(90deg,var(--brand-1),var(--brand-2));box-shadow:0 6px 18px rgba(99,102,241,.25)}
+  .btn-primary:hover{transform:translateY(-1px);filter:brightness(1.05)}
+  .btn-ghost{background:#f3f4f6;color:#111;border:1px solid var(--line)}
+  .btn-ghost:hover{background:#eef2ff;border-color:#c7d2fe}
+  .btn:disabled{opacity:.55;cursor:not-allowed;filter:saturate(.6);}
+
+  .pill{display:inline-flex;gap:6px;align-items:center;padding:4px 8px;background:#eef2ff;color:#3730a3;border-radius:999px;font-size:12px}
+  .ok-pill{background:#ecfdf5;color:#065f46}
+
+  textarea#markdown-input{width:100%;min-height:260px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:12px;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Monaco,"Courier New",monospace;background:#fcfcff}
+  .toolbar{display:flex;gap:8px;align-items:center;margin:8px 0 12px 0;flex-wrap:wrap}
+  #html-output{flex:1;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;overflow:auto}
+  span.word{cursor:pointer;transition:background-color .2s}
+  span.word:hover{background:#fffbcc}
+
+  /* 选区浮条 */
+  .sel-toolbar{
+    position:absolute;top:0;left:0;transform:translate(-50%,-120%);
+    display:flex;gap:6px;background:#111827;color:#fff;padding:6px 8px;border-radius:10px;
+    box-shadow:0 10px 28px rgba(0,0,0,.25);z-index:9999;align-items:center
+  }
+  .sel-toolbar .btn{padding:6px 10px;border-radius:8px}
+  .sel-toolbar .btn-ghost{background:#374151;color:#fff;border-color:#4b5563}
+  .hidden{display:none!important}
+
+  /* 设置模态框 */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998}
+  .modal{
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:min(560px,92vw);background:#fff;padding:16px;border-radius:14px;
+    box-shadow:0 20px 60px rgba(0,0,0,.35);z-index:9999
+  }
+  .grid{display:grid;grid-template-columns:140px 1fr;gap:10px 12px;align-items:center}
+  .grid input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}
+  .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+
+  /* toast */
+  .toast{
+    position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
+    background:#111827;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 12px 26px rgba(0,0,0,.25);z-index:10000
+  }
+
+  @media (max-width:1000px){.container{flex-direction:column}.left{width:100%}}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- LEFT -->
+  <section class="panel left" id="left-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <h2>输入 / 导入 Markdown</h2>
+      <span id="cfg-state" class="pill" title="GitHub设置状态">未配置</span>
+    </div>
+
+    <!-- 导入卡片：上传/拖拽 + 链接导入 -->
+    <div class="import-card" id="dropzone">
+      <div class="import-row">
+        <button id="upload-btn" class="btn btn-primary" type="button" title="选择 .md 文件">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0l-4 4m4-4l4 4M6 20h12a2 2 0 0 0 2-2v-3M6 20a2 2 0 0 1-2-2v-3m0 0H3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          上传 .md
+        </button>
+        <input id="file-input" type="file" accept=".md,.markdown,.txt" class="hidden" />
+        <span id="file-name" class="subtle"></span>
+        <span class="subtle">也可把文件拖进这块区域</span>
+      </div>
+
+      <div class="import-row">
+        <div class="input-group" style="flex:1">
+          <input id="md-url" type="text" placeholder="粘贴 GitHub/Gist 文件链接（raw 或 /blob/），回车或点右侧导入" />
+          <button id="import-url-btn" class="btn btn-ghost" type="button" title="从链接导入">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M10 14a5 5 0 0 1 0-7l1.5-1.5a5 5 0 0 1 7 7L17 13M14 10a5 5 0 0 1 0 7L12.5 18.5a5 5 0 0 1-7-7L7 11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            导入
+          </button>
+        </div>
+        <span class="subtle">私有仓库会使用设置里的 Token 走 API</span>
+      </div>
+    </div>
+
+    <textarea id="markdown-input" placeholder="在此输入或粘贴 Markdown..."></textarea>
+    <span class="subtle">导入后自动在右侧预览；右侧可选中任意内容保存到 GitHub。</span>
+  </section>
+
+  <!-- RIGHT -->
+  <section class="panel right">
+    <h2 style="margin-bottom:6px">Markdown 特效展示</h2>
+    <div class="toolbar">
+      <button id="convert-btn" class="btn btn-primary" type="button">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.5 3.5L17 8l-3.5 1.5L12 13l-1.5-3.5L7 8l3.5-1.5L12 3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        转换为特效HTML
+      </button>
+      <button id="toggle-btn" class="btn btn-ghost" type="button">收起输入区</button>
+      <button id="download-btn" class="btn btn-ghost" type="button">下载 HTML</button>
+      <button id="open-settings-top" class="btn btn-ghost" type="button">设置（GitHub）</button>
+
+      <!-- 新增：固定的、可见的保存按钮（当有选区时自动亮起） -->
+      <button id="save-selection-btn" class="btn btn-primary" type="button" disabled title="先在右侧选中文字">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
+        保存选中
+      </button>
+
+      <span id="cfg-ok" class="pill ok-pill hidden">GitHub 已配置</span>
+    </div>
+    <div id="html-output"></div>
+  </section>
+</div>
+
+<!-- 选区浮条（保留） -->
+<div id="sel-toolbar" class="sel-toolbar hidden">
+  <button id="save-snippet-btn" class="btn btn-primary" type="button">
+    <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
+    保存到 GitHub
+  </button>
+  <button id="open-settings-btn" class="btn btn-ghost" type="button">设置</button>
+</div>
+
+<!-- 设置模态框 -->
+<div id="modal-backdrop" class="modal-backdrop hidden"></div>
+<div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <h3 id="settings-title" style="margin:0 0 10px">GitHub 设置</h3>
+  <div class="grid">
+    <label for="gh-token">Token*</label>
+    <input id="gh-token" type="password" placeholder="Fine-grained token（仅该仓库 contents:write）" />
+    <label for="gh-owner">Owner*</label>
+    <input id="gh-owner" type="text" placeholder="your-username 或 org-name" />
+    <label for="gh-repo">Repo*</label>
+    <input id="gh-repo" type="text" placeholder="my-notes" />
+    <label for="gh-branch">Branch</label>
+    <input id="gh-branch" type="text" placeholder="main（默认）" />
+    <label for="gh-dir">目录*</label>
+    <input id="gh-dir" type="text" placeholder="notes/ 或 snippets/" />
+    <label for="gh-file">文件名</label>
+    <input id="gh-file" type="text" placeholder="snippets.md（留空则按日期自动生成）" />
+    <div class="subtle" style="grid-column:1 / -1">参数存于 localStorage（仅本浏览器）。请使用最小权限 Token。</div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-ghost" id="cancel-settings" type="button">取消</button>
+    <button class="btn btn-primary" id="save-settings" type="button">保存</button>
+  </div>
+</div>
+
+<!-- marked.js -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+/** ================== 基本引用 ================== */
+const leftPanel = document.getElementById('left-panel');
+const markdownInput = document.getElementById('markdown-input');
+const convertBtn = document.getElementById('convert-btn');
+const toggleBtn = document.getElementById('toggle-btn');
+const downloadBtn = document.getElementById('download-btn');
+const htmlOutput = document.getElementById('html-output');
+
+const uploadBtn = document.getElementById('upload-btn');
+const fileInput = document.getElementById('file-input');
+const fileNameSpan = document.getElementById('file-name');
+
+const urlInput = document.getElementById('md-url');
+const importUrlBtn = document.getElementById('import-url-btn');
+const dropzone = document.getElementById('dropzone');
+
+const toolbar = document.getElementById('sel-toolbar');
+const saveSnippetBtn = document.getElementById('save-snippet-btn');  // 浮条保存
+const saveSelectionBtn = document.getElementById('save-selection-btn'); // 固定保存
+const openSettingsBtn = document.getElementById('open-settings-btn');
+const openSettingsTop = document.getElementById('open-settings-top');
+
+const modal = document.getElementById('settings-modal');
+const backdrop = document.getElementById('modal-backdrop');
+
+const elToken  = document.getElementById('gh-token');
+const elOwner  = document.getElementById('gh-owner');
+const elRepo   = document.getElementById('gh-repo');
+const elBranch = document.getElementById('gh-branch');
+const elDir    = document.getElementById('gh-dir');
+const elFile   = document.getElementById('gh-file');
+const btnCancel= document.getElementById('cancel-settings');
+const btnSave  = document.getElementById('save-settings');
+
+const cfgState = document.getElementById('cfg-state');
+const cfgOk = document.getElementById('cfg-ok');
+
+/** 导入来源（便于写入 Source） */
+let sourceOverride = null; // {title, url}
+
+/** ================== Markdown → HTML ================== */
+convertBtn.addEventListener('click', () => {
+  const md = markdownInput.value || '';
+  const rawHtml = marked.parse(md);
+  htmlOutput.innerHTML = rawHtml;
+  wrapWords(htmlOutput);
+});
+toggleBtn.addEventListener('click', () => {
+  leftPanel.style.display = leftPanel.style.display === 'none' ? '' : 'none';
+  toggleBtn.textContent = (leftPanel.style.display === 'none') ? '显示输入区' : '收起输入区';
+});
+downloadBtn.addEventListener('click', downloadHTML);
+
+function wrapWords(root){
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    const parent = node.parentNode;
+    const text = node.textContent;
+    const frags = text.split(/([a-zA-Z0-9äöüÄÖÜß]+)/);
+    const fragRoot = document.createDocumentFragment();
+    const sentence = text.trim();
+    frags.forEach(part=>{
+      if (/^[a-zA-Z0-9äöüÄÖÜß]+$/.test(part)) {
+        const span = document.createElement('span');
+        span.className='word'; span.textContent = part;
+        span.setAttribute('data-word', part);
+        span.setAttribute('data-sentence', sentence);
+        span.addEventListener('click', (e)=>playWord(e.target.getAttribute('data-word')));
+        span.addEventListener('dblclick', (e)=>playSentence(e.target.getAttribute('data-sentence')));
+        fragRoot.appendChild(span);
+      } else {
+        fragRoot.appendChild(document.createTextNode(part));
+      }
+    });
+    parent.replaceChild(fragRoot, node);
+  });
+}
+function playWord(w){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(w); const a=new Audio(url); a.playbackRate=1.3; a.play().catch(()=>{}); }
+function playSentence(s){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(s); const a=new Audio(url); a.playbackRate=1.1; a.play().catch(()=>{}); }
+function downloadHTML(){
+  const content = htmlOutput.innerHTML;
+  const tpl = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>导出HTML</title>
+  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;padding:20px;background:#f8fafc}span.word{cursor:pointer}span.word:hover{background:#fffbcc}</style>
+  </head><body>${content}</body></html>`;
+  const blob = new Blob([tpl],{type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'),{href:url,download:'markdown_export.html'});
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+/** ================== 导入：文件 ================== */
+uploadBtn.addEventListener('click',()=>fileInput.click());
+fileInput.addEventListener('change', async (e)=>{
+  const file = e.target.files?.[0]; if(!file) return;
+  if (file.size > 10*1024*1024){ toast('文件过大（>10MB）'); return;}
+  try{
+    const txt = await file.text();
+    fileNameSpan.textContent = file.name;
+    sourceOverride = {title:`Local file: ${file.name}`, url:`file://${file.name}`};
+    loadMarkdownIntoEditor(txt);
+    toast('已导入本地文件 ✅');
+  }catch{ toast('读取文件失败'); }
+});
+['dragenter','dragover'].forEach(evt=>{
+  dropzone.addEventListener(evt, e=>{
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--brand-1)';
+    dropzone.style.boxShadow = '0 0 0 3px rgba(99,102,241,.15)';
+  });
+});
+['dragleave','drop'].forEach(evt=>{
+  dropzone.addEventListener(evt, e=>{
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--line)';
+    dropzone.style.boxShadow = 'none';
+  });
+});
+dropzone.addEventListener('drop', async (e)=>{
+  const file = e.dataTransfer?.files?.[0]; if(!file) return;
+  if (!/\.(md|markdown|txt)$/i.test(file.name)){ toast('请拖入 .md/.markdown/.txt 文件'); return;}
+  if (file.size > 10*1024*1024){ toast('文件过大（>10MB）'); return;}
+  try{
+    const txt = await file.text();
+    fileNameSpan.textContent = file.name;
+    sourceOverride = {title:`Local file: ${file.name}`, url:`file://${file.name}`};
+    loadMarkdownIntoEditor(txt);
+    toast('已导入本地文件 ✅');
+  }catch{ toast('读取文件失败'); }
+});
+
+/** ================== 导入：GitHub/Gist 链接 ================== */
+importUrlBtn.addEventListener('click', importFromUrl);
+urlInput.addEventListener('keydown', e=>{ if(e.key==='Enter') importFromUrl(); });
+
+async function importFromUrl(){
+  const u = urlInput.value.trim();
+  if(!u){ toast('请粘贴 GitHub/Gist 文件链接'); return;}
+  toast('正在导入...');
+  try{
+    const text = await fetchMarkdownFromUrl(u, getConfig().token);
+    sourceOverride = {title:'Imported from URL', url:u};
+    loadMarkdownIntoEditor(text);
+    toast('已从链接导入 ✅');
+  }catch(err){
+    toast('导入失败：'+(err?.message||'未知错误'));
+  }
+}
+function loadMarkdownIntoEditor(text){
+  markdownInput.value = text;
+  convertBtn.click();
+  htmlOutput.scrollTop = 0;
+}
+async function fetchMarkdownFromUrl(url, token){
+  let u; try{ u = new URL(url); }catch{ throw new Error('无效链接'); }
+  const host = u.host.toLowerCase();
+  if(host==='raw.githubusercontent.com' || host==='gist.githubusercontent.com'){
+    const r = await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(`获取失败(${r.status})`);
+    return await r.text();
+  }
+  if(host==='github.com'){
+    const parts = u.pathname.split('/').filter(Boolean);
+    const blobIdx = parts.indexOf('blob');
+    if (blobIdx!==-1 && parts.length>blobIdx+2){
+      const owner = parts[0], repo = parts[1], branch = parts[blobIdx+1];
+      const path  = parts.slice(blobIdx+2).join('/');
+      const raw = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+      const r1 = await fetch(raw,{cache:'no-store'}); if (r1.ok) return await r1.text();
+      const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
+      const r2 = await fetch(api,{headers:{'Accept':'application/vnd.github+json', ...(token?{'Authorization':`Bearer ${token}`}:{}) ,'X-GitHub-Api-Version':'2022-11-28'}});
+      if(!r2.ok) throw new Error(`API 获取失败(${r2.status})`);
+      const json = await r2.json();
+      return b64Decode(json.content||'');
+    }
+    throw new Error('请使用 raw 链接或包含 /blob/ 的文件页链接');
+  }
+  if(host==='gist.github.com'){
+    const parts = u.pathname.split('/').filter(Boolean);
+    if(parts.length<2) throw new Error('无效 Gist 链接');
+    const gistId = parts[1];
+    const r = await fetch(`https://api.github.com/gists/${gistId}`,{headers:{'Accept':'application/vnd.github+json', ...(token?{'Authorization':`Bearer ${token}`}:{})}});
+    if(!r.ok) throw new Error(`Gist 获取失败(${r.status})`);
+    const json = await r.json();
+    const files = json.files||{};
+    const first = Object.keys(files).find(k => typeof files[k]?.content === 'string');
+    if(!first) throw new Error('Gist 中未发现文本文件');
+    return files[first].content;
+  }
+  const r = await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(`获取失败(${r.status})`);
+  return await r.text();
+}
+
+/** ================== 选区浮条 + 固定保存按钮 + 快捷键 ================== */
+loadSettings(); // 先读本地配置
+document.addEventListener('mouseup', handleSelectionChange);
+document.addEventListener('keyup', handleSelectionChange);
+document.addEventListener('selectionchange', handleSelectionChange); // 让固定按钮随选区实时亮起
+document.addEventListener('scroll', ()=>hide(toolbar), true);
+window.addEventListener('resize', ()=>hide(toolbar));
+
+// 固定按钮点击：与浮条保存共享同一逻辑
+saveSelectionBtn.addEventListener('click', async ()=>{
+  await doSaveCurrentSelection();
+});
+// 浮条按钮点击
+saveSnippetBtn.addEventListener('click', async ()=>{
+  await doSaveCurrentSelection();
+});
+
+// 支持快捷键：Ctrl/Cmd + S 保存选中
+document.addEventListener('keydown', async (e)=>{
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){
+    e.preventDefault();
+    await doSaveCurrentSelection();
+  }
+});
+
+function getSelectedText(){
+  const sel = window.getSelection();
+  if(!sel || sel.isCollapsed) return '';
+  return sel.toString().trim();
+}
+
+async function doSaveCurrentSelection(){
+  const cfg = getConfig();
+  if(!cfg.token || !cfg.owner || !cfg.repo || !cfg.dir){ openSettings(); return; }
+  const text = getSelectedText();
+  if(!text){ toast('请先在右侧预览中选中文本'); return; }
+  try{
+    await appendSelectionToGitHub(text, cfg);
+    toast('已保存到 GitHub ✅');
+    hide(toolbar);
+    const sel = window.getSelection(); sel && sel.removeAllRanges();
+    handleSelectionChange(); // 立刻刷新按钮禁用状态
+  }catch(err){
+    toast('保存失败：'+(err?.message||'未知错误'));
+  }
+}
+
+function handleSelectionChange(){
+  const txt = getSelectedText();
+
+  // 浮条显隐与定位
+  if (!txt){ hide(toolbar); }
+  else {
+    try{
+      const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
+      const top = rect.top + window.scrollY;
+      const left = rect.left + rect.width/2 + window.scrollX;
+      toolbar.style.top = `${top}px`;
+      toolbar.style.left = `${left}px`;
+      show(toolbar);
+    }catch{ hide(toolbar); }
+  }
+
+  // 固定按钮的可用状态与文案
+  saveSelectionBtn.disabled = !txt;
+  saveSelectionBtn.innerText = txt ? `保存选中（${txt.length}字）` : '保存选中';
+}
+
+/** ================== 设置（localStorage 持久化） ================== */
+[openSettingsBtn, openSettingsTop].forEach(b=>b.addEventListener('click', openSettings));
+btnCancel.addEventListener('click', closeSettings);
+backdrop.addEventListener('click', closeSettings);
+btnSave.addEventListener('click', ()=>{
+  saveSettings();
+  updateCfgBadge();
+  closeSettings();
+  toast('设置已保存');
+});
+function updateCfgBadge(){
+  const cfg = getConfig();
+  const ok = !!(cfg.token && cfg.owner && cfg.repo && cfg.dir);
+  cfgState.textContent = ok ? '已配置' : '未配置';
+  cfgState.className = 'pill ' + (ok?'ok-pill':'');
+  cfgOk?.classList?.toggle?.('hidden', !ok);
+}
+function openSettings(){ show(backdrop); show(modal); }
+function closeSettings(){ hide(modal); hide(backdrop); }
+function show(el){ el.classList.remove('hidden'); }
+function hide(el){ el.classList.add('hidden'); }
+
+function getConfig(){
+  return {
+    token:  localStorage.getItem('gh_token')  || elToken.value.trim(),
+    owner:  localStorage.getItem('gh_owner')  || elOwner.value.trim(),
+    repo:   localStorage.getItem('gh_repo')   || elRepo.value.trim(),
+    branch: localStorage.getItem('gh_branch') || elBranch.value.trim() || 'main',
+    dir:    (localStorage.getItem('gh_dir')   || elDir.value.trim() || '').replace(/^\/+/, '').replace(/\/?$/, '/'),
+    file:   localStorage.getItem('gh_file')   || elFile.value.trim(),
+  };
+}
+function saveSettings(){
+  localStorage.setItem('gh_token',  elToken.value.trim());
+  localStorage.setItem('gh_owner',  elOwner.value.trim());
+  localStorage.setItem('gh_repo',   elRepo.value.trim());
+  localStorage.setItem('gh_branch', elBranch.value.trim() || 'main');
+  localStorage.setItem('gh_dir',    elDir.value.trim());
+  localStorage.setItem('gh_file',   elFile.value.trim());
+}
+function loadSettings(){
+  elToken.value  = localStorage.getItem('gh_token')  || '';
+  elOwner.value  = localStorage.getItem('gh_owner')  || '';
+  elRepo.value   = localStorage.getItem('gh_repo')   || '';
+  elBranch.value = localStorage.getItem('gh_branch') || 'main';
+  elDir.value    = localStorage.getItem('gh_dir')    || '';
+  elFile.value   = localStorage.getItem('gh_file')   || '';
+}
+
+/** ================== Snippet 追加上传 ================== */
+async function appendSelectionToGitHub(selectedText, cfg){
+  const now = new Date();
+  const timeStr = new Intl.DateTimeFormat('zh-CN',{
+    timeZone:'Europe/Berlin', year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
+  }).format(now).replace(/\//g,'-');
+
+  // 若有导入来源，则写进 Source；否则使用页面标题与 URL
+  const sourceTitle = (sourceOverride?.title) ? sourceOverride.title : (document.title || 'Untitled Page');
+  const sourceUrl   = (sourceOverride?.url)   ? sourceOverride.url   : location.href;
+
+  const entry = `
+
+---
+**Time:** ${timeStr} (Europe/Berlin)  
+**Source:** [${escapeMd(sourceTitle)}](${sourceUrl})
+
+> ${escapeMd(selectedText).replace(/\n/g,'\n> ')}
+`;
+
+  const yyyy = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin', year:'numeric', month:'2-digit', day:'2-digit'}).format(now);
+  const fileName = (cfg.file && cfg.file.trim()) ? cfg.file.trim() : `${yyyy}.md`;
+  const path = cfg.dir + fileName;
+
+  const existing = await githubGetFile(cfg, path); // {sha, contentStr} | null
+  const header = '# Collected Snippets\n';
+  const newContent = (existing?.contentStr ? existing.contentStr : header) + entry;
+
+  await githubPutFile(cfg, path, newContent, existing?.sha, `append snippet from page @ ${timeStr}`);
+}
+function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
+
+/** ================== GitHub API ================== */
+const GH_API = 'https://api.github.com';
+async function githubGetFile(cfg, path){
+  const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`;
+  const res = await fetch(url,{headers:{'Accept':'application/vnd.github+json','Authorization':`Bearer ${cfg.token}`,'X-GitHub-Api-Version':'2022-11-28'}});
+  if(res.status===404) return null;
+  if(!res.ok){
+    const txt=await res.text();
+    throw new Error(`读取文件失败 (${res.status}): ${txt}`);
+  }
+  const json = await res.json();
+  const contentStr = b64Decode(json.content||'');
+  return { sha: json.sha, contentStr };
+}
+async function githubPutFile(cfg, path, contentStr, sha, message){
+  const url = `${GH_API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encodeURIComponent(path)}`;
+  const body = { message: message || 'update file', content: b64Encode(contentStr), branch: cfg.branch };
+  if (sha) body.sha = sha;
+  const res = await fetch(url,{method:'PUT',headers:{'Accept':'application/vnd.github+json','Authorization':`Bearer ${cfg.token}`,'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!res.ok){
+    const txt = await res.text();
+    if(res.status===401) throw new Error('401 未授权：Token无效或权限不足');
+    if(res.status===403) throw new Error('403 被拒绝：Token权限或速率限制问题');
+    if(res.status===404) throw new Error('404 未找到：仓库/分支/路径可能错误');
+    if(res.status===409) throw new Error('409 冲突：分支/sha 冲突，可稍后重试');
+    throw new Error(`保存失败 (${res.status}): ${txt}`);
+  }
+  return res.json();
+}
+/** Base64 UTF-8 */
+function b64Encode(str){ const bytes=new TextEncoder().encode(str); let bin=''; bytes.forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin); }
+function b64Decode(b64){ const bin=atob((b64||'').replace(/\n/g,'')); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
+
+/** ================== 初始化 ================== */
+function toast(msg, ms=2000){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(), ms); }
+window.onload = ()=>{
+  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；<b>右侧选中文本</b>后，上方「保存选中」按钮会亮起，也会出现悬浮条，可任意入口保存到 GitHub。</p>';
+  loadSettings();
+  updateCfgBadge();
+};
+</script>
+</body>
+</html>
