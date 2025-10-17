@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="de"> <!-- 设置为德语 -->
+<head>
+    <meta charset="UTF-8">
+    <title>Markdown 特效转换器</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+    <!-- 为响应式布局添加视口元标签 -->
+    <style>
+        /* 基础设置 */
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f0f2f5; /* 整体背景颜色 */
+        }
+
+        /* 容器，左右布局 */
+        .container {
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            transition: all 0.5s ease; /* 平滑过渡 */
+        }
+
+        /* 左侧输入面板 */
+        #left-panel {
+            width: 50%;
+            min-width: 300px; /* 设定一个最小宽度，防止过小 */
+            border-right: 1px solid #ccc;
+            padding: 16px;
+            background-color: #fff;
+            transition: all 0.5s ease; /* 平滑过渡 */
+        }
+        /* 收起后样式 */
+        #left-panel.hidden {
+            display: none; /* 完全隐藏左侧面板 */
+        }
+
+        /* 右侧展示面板 */
+        #right-panel {
+            flex: 1;
+            padding: 16px;
+            overflow: auto;
+            background-color: #fff;
+            transition: all 0.5s ease; /* 平滑过渡 */
+        }
+
+        /* 标题样式 */
+        #left-panel h2, #right-panel h2 {
+            margin-top: 0;
+            color: #333;
+        }
+
+        /* 输入框样式 */
+        #markdown-input {
+            width: 100%;
+            height: calc(100% - 80px);
+            padding: 8px;
+            resize: none;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* 按钮工具栏 */
+        .toolbar {
+            margin-bottom: 8px;
+            display: flex;
+            gap: 8px; /* 按钮间隙 */
+            align-items: center;
+            flex-wrap: wrap; /* 当空间不足时，按钮可以换行 */
+        }
+        .toolbar button {
+            border: none;
+            padding: 8px 14px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            color: #fff;
+            background-color: #007bff; /* 蓝色按钮 */
+            transition: background-color 0.2s ease;
+            white-space: nowrap; /* 防止按钮中文本换行 */
+        }
+        .toolbar button:hover {
+            background-color: #0056b3;
+        }
+
+        /* 分割线美化 */
+        hr {
+            border: none;
+            height: 1px;
+            background-color: #ccc;
+            margin: 16px 0;
+        }
+
+        /* Markdown 生成内容区域 */
+        #html-output {
+            line-height: 1.6;
+            color: #333;
+        }
+
+        /* 保持Markdown原有样式 */
+        span.word {
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        span.word:hover {
+            background-color: yellow;
+        }
+
+        /* ============= 媒体查询：在屏幕宽度较小（如平板或手机）时，做自适应 ============= */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column; /* 改为上下排列 */
+                height: auto;           /* 高度自适应 */
+            }
+            #left-panel {
+                width: 100%;
+                min-width: auto;
+                border-right: none; 
+                border-bottom: 1px solid #ccc; /* 分隔线改为底部 */
+                height: auto;         
+            }
+            #left-panel.hidden {
+                display: none; /* 小屏时隐藏面板直接display:none */
+            }
+            #right-panel {
+                width: 100%;
+                height: auto;
+            }
+            #markdown-input {
+                height: 200px; /* 在小屏上，给文本框一个相对固定的高度 */
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- 左侧：输入Markdown的区域 -->
+    <div id="left-panel">
+        <h2>输入 Markdown</h2>
+        <textarea id="markdown-input" placeholder="在此处粘贴您的Markdown内容...">
+# Beispiel-Überschrift
+
+Dies ist ein **fettes** Wort und ein *kursives* Wort.
+
+Klicken Sie auf ein beliebiges Wort, um es auszusprechen. (Ein Klick spielt das Wort ab, ein Doppelklick spielt den ganzen Satz ab.)
+
+Zum Beispiel: Schröder, Fußball, Straße, außergewöhnlich ...
+        </textarea>
+    </div>
+
+    <!-- 右侧：展示转换后HTML的区域 -->
+    <div id="right-panel">
+        <h2>Markdown 特效展示</h2>
+
+        <!-- 按钮工具栏 -->
+        <div class="toolbar">
+            <button id="convert-btn">转换为特效HTML</button>
+            <button id="toggle-btn">收起输入区</button>
+            <button id="download-btn">下载 HTML</button>
+        </div>
+
+        <hr>
+
+        <!-- 用于显示转换后的HTML -->
+        <div id="html-output"></div>
+    </div>
+</div>
+
+<!-- 引入marked.js库（也可自行下载本地使用） -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<script>
+    // 获取页面元素
+    const convertBtn = document.getElementById('convert-btn');
+    const toggleBtn = document.getElementById('toggle-btn');
+    const downloadBtn = document.getElementById('download-btn');
+
+    const markdownInput = document.getElementById('markdown-input');
+    const htmlOutput = document.getElementById('html-output');
+    const leftPanel = document.getElementById('left-panel');
+
+    // 监听“转换”按钮点击事件
+    convertBtn.addEventListener('click', () => {
+        const markdownText = markdownInput.value;
+        // 使用marked将Markdown转换为HTML
+        const rawHtml = marked.parse(markdownText);
+        // 将HTML设置到输出区域
+        htmlOutput.innerHTML = rawHtml;
+
+        // 处理HTML，给每个单词添加点击和双击发音功能
+        wrapWords(htmlOutput);
+    });
+
+    // 监听“收起/显示输入区”按钮事件
+    toggleBtn.addEventListener('click', () => {
+        leftPanel.classList.toggle('hidden');
+        // 更新按钮文本
+        if (leftPanel.classList.contains('hidden')) {
+            toggleBtn.textContent = '显示输入区';
+        } else {
+            toggleBtn.textContent = '收起输入区';
+        }
+    });
+
+    // 监听“下载 HTML”按钮事件
+    downloadBtn.addEventListener('click', () => {
+        downloadHTML();
+    });
+
+    /**
+     * 遍历元素中的文本节点，并将每个（德语）单词用<span>包裹
+     * 注意：这里使用了更符合德语的匹配方式（含 ä, ö, ü, ß 等字符）
+     * @param {HTMLElement} element - 要处理的元素
+     */
+    function wrapWords(element) {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+        const textNodes = [];
+        while (walker.nextNode()) {
+            textNodes.push(walker.currentNode);
+        }
+
+        textNodes.forEach(node => {
+            const parent = node.parentNode;
+            const text = node.textContent;
+            // 使用正则匹配“单词”，考虑德语常见字母/变音符号/ß 等
+            const fragments = text.split(/([a-zA-Z0-9äöüÄÖÜß]+)/);
+
+            const fragment = document.createDocumentFragment();
+
+            // 为双击发音，需要把本行文字当做一个“句子”
+            const sentence = text.trim();
+
+            fragments.forEach(part => {
+                // part若符合德语字符段，创建span，否则原样保留
+                if (/^[a-zA-Z0-9äöüÄÖÜß]+$/.test(part)) {
+                    const span = document.createElement('span');
+                    span.className = 'word';
+                    span.textContent = part;
+                    // 存一下“单词”和“整句”，点击和双击的时候方便取
+                    span.setAttribute('data-word', part);
+                    span.setAttribute('data-sentence', sentence);
+
+                    // 单击 播放单词
+                    span.addEventListener('click', (e) => {
+                        const word = e.target.getAttribute('data-word');
+                        playWord(word);
+                    });
+
+                    // 双击 播放整句
+                    span.addEventListener('dblclick', (e) => {
+                        const entireSentence = e.target.getAttribute('data-sentence');
+                        playSentence(entireSentence);
+                    });
+
+                    fragment.appendChild(span);
+                } else {
+                    fragment.appendChild(document.createTextNode(part));
+                }
+            });
+
+            parent.replaceChild(fragment, node);
+        });
+    }
+
+    /**
+     * 播放指定单词的音频
+     * 这里示例使用了 frdic 的德语语音接口，你可换成自己实际可用的接口
+     * @param {string} word - 要发音的单词
+     */
+    function playWord(word) {
+        const url = "https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt=" + encodeURIComponent(word);
+        const audio = new Audio(url);
+        audio.playbackRate = 1.3; // 播放速度，可自行调节
+        audio.play().catch(error => {
+            console.error(`无法播放音频: ${error}`);
+            // alert(`无法播放单词 "${word}" 的音频。`);
+        });
+    }
+
+    /**
+     * 播放指定句子的音频
+     * @param {string} sentence - 要发音的句子
+     */
+    function playSentence(sentence) {
+        const url = "https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt=" + encodeURIComponent(sentence);
+        const audio = new Audio(url);
+        audio.playbackRate = 1.1;
+        audio.play().catch(error => {
+            console.error(`无法播放音频: ${error}`);
+            // alert(`无法播放句子 "${sentence}" 的音频。`);
+        });
+    }
+
+    /**
+     * 将右侧展示的HTML内容导出为HTML文件
+     */
+    function downloadHTML() {
+        // 获取右侧生成的HTML内容
+        const content = htmlOutput.innerHTML;
+        // 构造完整HTML文档（添加必要的head元素和样式）
+        const fullHtml = `
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Exportierte Markdown HTML</title>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+        span.word {
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        span.word:hover {
+            background-color: yellow;
+        }
+    </style>
+</head>
+<body>
+${content}
+</body>
+</html>
+        `;
+
+        // 创建Blob对象并生成URL
+        const blob = new Blob([fullHtml], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+
+        // 创建一个隐藏的a标签模拟下载
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = "markdown_export.html";  // 下载的文件名
+        document.body.appendChild(link);
+        link.click();
+
+        // 移除临时链接
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    // 初始化：自动转换默认Markdown内容
+    window.onload = () => {
+        convertBtn.click();
+    };
+</script>
+</body>
+</html>
