@@ -250,7 +250,42 @@ downloadBtn.addEventListener('click', () => {
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/** 把纯文本节点包成 span.word；点击朗读，若当前有选区则不打扰（避免清空选区） */
+/** ================== 单例播放器 + 轻节流 + 回退 ================== */
+// 替换原 playWord / playSentence，统一用单例音频，必要时回退到 speechSynthesis
+const tts = { audio: new Audio(), lastTs: 0, minGap: 220 }; // ms
+tts.audio.preload = 'none';
+
+function speakUrl(url, plainTextForFallback='', rate=1.25){
+  const now = Date.now();
+  if (now - tts.lastTs < tts.minGap) return;
+  tts.lastTs = now;
+
+  try { tts.audio.pause(); } catch {}
+  tts.audio.playbackRate = rate;
+  tts.audio.src = url + (url.includes('?') ? '&' : '?') + '_=' + now; // 防缓存
+  tts.audio.currentTime = 0;
+  tts.audio.play().catch(() => {
+    if ('speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch {}
+      const u = new SpeechSynthesisUtterance(plainTextForFallback);
+      u.lang = 'de-DE'; u.rate = 1.1;
+      window.speechSynthesis.speak(u);
+    } else {
+      toast('音频被阻止或服务限速，且无可用回退');
+    }
+  });
+}
+function playWord(w){
+  const url = "https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt=" + encodeURIComponent(w);
+  speakUrl(url, w, 1.3);
+}
+function playSentence(s){
+  const url = "https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt=" + encodeURIComponent(s);
+  speakUrl(url, s, 1.1);
+}
+
+/** ================== 包裹词（无逐词监听） ================== */
+// 事件委托会在容器上处理点击，这里只负责把纯文本拆成 span.word
 function wrapWords(root){
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
   const nodes = [];
@@ -267,14 +302,6 @@ function wrapWords(root){
         span.className='word'; span.textContent = part;
         span.setAttribute('data-word', part);
         span.setAttribute('data-sentence', sentence);
-        span.addEventListener('click', (e)=>{
-          if (latestSelection.text && latestSelection.text.length>0) return;
-          playWord(e.currentTarget.getAttribute('data-word'));
-        });
-        span.addEventListener('dblclick', (e)=>{
-          if (latestSelection.text && latestSelection.text.length>0) return;
-          playSentence(e.currentTarget.getAttribute('data-sentence'));
-        });
         fragRoot.appendChild(span);
       } else {
         fragRoot.appendChild(document.createTextNode(part));
@@ -283,11 +310,8 @@ function wrapWords(root){
     parent.replaceChild(fragRoot, node);
   });
 }
-function playWord(w){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(w); const a=new Audio(url); a.playbackRate=1.3; a.play().catch(()=>{}); }
-function playSentence(s){ const url="https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt="+encodeURIComponent(s); const a=new Audio(url); a.playbackRate=1.1; a.play().catch(()=>{}); }
 
 /** ================== iPad 选区“守望者” + 快照 ================== */
-/* 在触发选区的关键节点（touchstart、selectionchange、contextmenu）开启短时轮询，直到抓到非空文本 */
 let selWatchTimer = null;
 function startSelectionWatcher(windowMs=1500, intervalMs=120){
   stopSelectionWatcher();
@@ -297,7 +321,7 @@ function startSelectionWatcher(windowMs=1500, intervalMs=120){
     if(sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput(sel)){
       latestSelection = { text: sel.toString().trim(), range: sel.getRangeAt(0).cloneRange() };
       updateSaveButtons();
-      stopSelectionWatcher(); // 抓到即可停止
+      stopSelectionWatcher();
     }
     if(Date.now() - t0 > windowMs) stopSelectionWatcher();
   }, intervalMs);
@@ -334,11 +358,56 @@ function snapshotSelectionNow(){
   }
 }
 
-document.addEventListener('selectionchange', ()=>{ startSelectionWatcher(1200, 120); });
+/** ========= 改进点：仅当“当前真的有选区”才拦截点读；否则清空陈旧快照 ========= */
+function hasActiveSelectionInsideOutput(){
+  const sel = window.getSelection?.();
+  return !!(sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput(sel));
+}
+
+// 替换 selectionchange：无有效选区则清空快照，恢复点读
+document.addEventListener('selectionchange', () => {
+  const sel = window.getSelection?.();
+  if (sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput(sel)) {
+    startSelectionWatcher(1200, 120);
+  } else {
+    if (latestSelection.text) {
+      latestSelection = { text:'', range:null };
+      updateSaveButtons();
+    }
+  }
+});
+
+// 触发守望者（保持你原逻辑）
 htmlOutput.addEventListener('contextmenu', ()=>{ startSelectionWatcher(1200, 120); }, true);
-/* 触控开始就启动守望者，这样在拖动光标/扩大选区期间也能抓住 */
 ['touchstart','touchmove','touchend'].forEach(ev=>{
   htmlOutput.addEventListener(ev, ()=>{ startSelectionWatcher(1500, 120); }, {passive:true});
+});
+
+// 点击空白区域也清理快照（手感更一致）
+htmlOutput.addEventListener('pointerdown', () => {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed) {
+    if (latestSelection.text) {
+      latestSelection = { text:'', range:null };
+      updateSaveButtons();
+    }
+  }
+}, {passive:true});
+
+/** ================== 事件委托：容器处理点击/双击点读 ================== */
+htmlOutput.addEventListener('pointerup', (e) => {
+  const span = e.target.closest?.('span.word');
+  if (!span) return;
+  if (hasActiveSelectionInsideOutput()) return; // 有真实选区 → 不打扰保存流程
+  const w = span.getAttribute('data-word');
+  if (w) playWord(w);
+});
+htmlOutput.addEventListener('dblclick', (e) => {
+  const span = e.target.closest?.('span.word');
+  if (!span) return;
+  if (hasActiveSelectionInsideOutput()) return;
+  const s = span.getAttribute('data-sentence') || span.textContent || '';
+  if (s.trim()) playSentence(s.trim());
 });
 
 /** ================== 悬浮条 UI & 按钮状态 ================== */
@@ -653,7 +722,9 @@ function updateCfgBadge(){
   const ok = !!(cfg.token && cfg.owner && cfg.repo && cfg.dir);
   cfgState.textContent = ok ? '已配置' : '未配置';
   cfgState.className = 'pill ' + (ok?'ok-pill':'');
-  cfgOk?.classList?.toggle?.('hidden', !ok);
+
+  // 保持原 UI 行为
+  if (cfgOk?.classList?.toggle) cfgOk.classList.toggle('hidden', !ok);
 }
 function openSettings(){ show(backdrop); show(modal); }
 function closeSettings(){ hide(modal); hide(backdrop); }
@@ -729,6 +800,7 @@ function toast(msg, ms=2200){ const t=document.createElement('div'); t.className
 function b64Encode(str){ const bytes=new TextEncoder().encode(str); let bin=''; bytes.forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin); }
 function b64Decode(b64){ const bin=atob((b64||'').replace(/\n/g,'')); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
 function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
+function handleSelectionChange(){ updateSaveButtons(); }
 
 window.onload = ()=>{
   htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；右侧<b>长按选择</b>后点「保存选中」。<br>iPad 修复版：按钮不会清空选区；若仍无反应，请先单击一下右侧文本再长按选择。</p>';
