@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>实时语音转写 · 稳定分句（7s/10s 最长句时长，commit≠finalize）</title>
+<style>
+  :root{--bg:#0b1020;--panel:#111936;--text:#e7ecff;--muted:#93a4c3;--line:#1f2a4d;--shadow:0 20px 50px rgba(3,8,23,.4)}
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b1020,#0f1530 60%,#0b1020);color:var(--text);
+       font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
+  .card{background:linear-gradient(180deg,#0f1633,#0e1630);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+  .header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:space-between}
+  .title{font-size:18px;font-weight:700}
+  .pill{border:1px solid var(--line);color:#93a4c3;padding:4px 8px;border-radius:999px;font-size:12px}
+  .body{padding:16px 20px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  .row > *{flex:1}
+  label{font-size:12px;color:#93a4c3;display:block;margin-bottom:6px}
+  input,select,button,textarea{background:#0b122b;border:1px solid var(--line);color:var(--text);
+    border-radius:10px;padding:10px 12px;outline:none}
+  select,button{cursor:pointer}
+  button.primary{background:linear-gradient(180deg,#4f6df7,#4a61e6);border:none}
+  button.ghost{background:#0b122b}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .btns{display:flex;gap:10px;flex-wrap:wrap}
+  .status{font-size:13px;color:#93a4c3}
+  .log{background:#0b122b;border:1px dashed #213069;border-radius:12px;padding:12px;height:160px;overflow:auto}
+  .preview-wrap{position:relative;margin-top:6px}
+  #preview{width:100%;height:560px;resize:vertical}
+  .copy-fab{position:absolute;right:8px;top:8px;background:#101a3b;border:1px solid #2a3870;border-radius:8px;padding:6px 10px;font-size:12px}
+  details.settings{margin:14px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  details.settings[open]{box-shadow:var(--shadow)}
+  details.settings summary{list-style:none;cursor:pointer;background:#0d1534;padding:12px 14px;display:flex;align-items:center;gap:10px;
+    user-select:none;border-bottom:1px solid var(--line)}
+  details.settings summary::-webkit-details-marker{display:none}
+  .chev{width:10px;height:10px;border-right:2px solid #7c9dfc;border-bottom:2px solid #7c9dfc;transform:rotate(-45deg);transition:.2s}
+  details.settings[open] .chev{transform:rotate(45deg)}
+  .controls{padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media (max-width:1000px){.controls{grid-template-columns:1fr}}
+  .small{font-size:12px;color:#93a4c3}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="header">
+      <div class="title">实时语音转写 <span class="pill">稳定分句 · iOS 优化 · 7s/10s 限制</span></div>
+      <div class="status" id="status">未连接</div>
+    </div>
+
+    <div class="body">
+      <div class="row">
+        <div>
+          <label>OpenAI API Key</label>
+          <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+        </div>
+        <div>
+          <label>Realtime 会话模型</label>
+          <select id="rtModel">
+            <option value="gpt-4o-mini-realtime-preview-2024-12-17" selected>gpt-4o-mini-realtime</option>
+            <option value="gpt-4o-realtime-preview-2024-12-17">gpt-4o-realtime</option>
+          </select>
+        </div>
+        <div>
+          <label>转写模型</label>
+          <select id="sttModel">
+            <option value="gpt-4o-mini-transcribe" selected>gpt-4o-mini-transcribe</option>
+            <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+          </select>
+        </div>
+      </div>
+
+      <details class="settings">
+        <summary><span class="chev"></span><b>参数设置（可收起/展开）</b><span class="small"> · 断句/延迟/翻译</span></summary>
+        <div class="controls">
+          <div>
+            <label>分句模式</label>
+            <select id="mode">
+              <option value="smart" selected>智能分句（默认）</option>
+              <option value="fast">低延迟（固定间隔微分段）</option>
+            </select>
+          </div>
+          <div>
+            <label>转写语言提示</label>
+            <select id="langHint">
+              <option value="">Auto</option><option value="zh" selected>中文</option>
+              <option value="de">Deutsch</option><option value="en">English</option>
+              <option value="ja">日本語</option><option value="fr">Français</option><option value="es">Español</option>
+            </select>
+          </div>
+          <div>
+            <label>固定分段间隔 ms（低延迟用）</label>
+            <input id="commitMs" type="number" min="300" max="2000" value="600" />
+          </div>
+          <div>
+            <label>能量阈值 高/低</label>
+            <div style="display:flex;gap:8px">
+              <input id="thrHigh" type="number" step="0.001" min="0.005" max="0.08" value="0.019" />
+              <input id="thrLow"  type="number" step="0.001" min="0.003" max="0.08" value="0.013" />
+            </div>
+          </div>
+          <div>
+            <label>软暂停/硬暂停 ms</label>
+            <div style="display:flex;gap:8px">
+              <input id="softPause" type="number" min="300" max="900" value="460" />
+              <input id="hardPause" type="number" min="900" max="2200" value="1450" />
+            </div>
+          </div>
+          <div>
+            <label>最长连续片段 ms（音频切刀）</label>
+            <input id="maxRun" type="number" min="2000" max="8000" value="5400" />
+          </div>
+
+          <div>
+            <label>TTS 输出（可选）</label>
+            <select id="ttsVoice">
+              <option value="" selected>禁用（仅转写/翻译）</option>
+              <option>alloy</option><option>ash</option><option>ballad</option><option>coral</option>
+              <option>echo</option><option>sage</option><option>shimmer</option><option>verse</option>
+              <option>marin</option><option>cedar</option>
+            </select>
+          </div>
+
+          <div>
+            <label>实时翻译</label>
+            <select id="translateOn">
+              <option value="on" selected>开启</option>
+              <option value="off">关闭</option>
+            </select>
+          </div>
+          <div>
+            <label>目标语言</label>
+            <select id="translateTarget">
+              <option value="auto" selected>自动对向</option>
+              <option value="zh">中文</option><option value="de">Deutsch</option>
+              <option value="en">English</option><option value="ja">日本語</option>
+              <option value="fr">Français</option><option value="es">Español</option>
+            </select>
+          </div>
+          <div>
+            <label>近实时预览翻译</label>
+            <select id="nearRealtime">
+              <option value="on" selected>开启（边说边出临时译）</option>
+              <option value="off">关闭（只句落地译）</option>
+            </select>
+          </div>
+        </div>
+      </details>
+
+      <div class="row btns">
+        <button class="primary" id="btnStart">开始</button>
+        <button class="ghost" id="btnToggle" disabled>暂停</button>
+        <button class="ghost" id="btnStop" disabled>停止</button>
+        <button class="ghost" id="btnCopyPreview" disabled>复制预览文本</button>
+      </div>
+
+      <label>实时文本预览（原文 + 译文，单窗口展示）</label>
+      <div class="preview-wrap">
+        <button class="copy-fab" id="btnCopyFab">复制</button>
+        <textarea id="preview" class="mono" placeholder="开始后，这里将滚动显示你的长句实时转写与翻译…"></textarea>
+      </div>
+
+      <p class="small" id="presetNote"></p>
+
+      <label>系统日志</label>
+      <div class="log mono small" id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const log = (msg, cls="") => { const p=document.createElement("div"); p.textContent=msg; if(cls)p.className=cls;
+    $("log").appendChild(p); $("log").scrollTop=$("log").scrollHeight; };
+  const setStatus = (txt) => $("status").textContent = txt;
+
+  // —— 客户端检测（iPad 报 Mac 也识别）——
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  // —— 稳态预设 + 7s/10s 句时长限制 —— //
+  const PRESETS = {
+    desktop: {
+      mode: "smart",
+      commitMs: 600,
+      thrHigh: 0.019, thrLow: 0.013,
+      softPause: 460, hardPause: 1450, maxRun: 5400,
+      minCommitChars: 10,              // 有足够新字才能 commit
+      minCharsPerCommit: 4,            // 防 0ms：单次 commit 至少新增 4 字
+      minFinalChars: 22,               // 落地门槛（标点不特权）
+      finalizeGraceMs: 420,            // 硬暂停后再等这么久才强制落地
+      // —— 新：最大“单句龄”限制 —— //
+      maxSegmentSoftMs: 7000,          // 7 秒：尽量落地
+      maxSegmentHardMs: 10000,         // 10 秒：无论怎样都强制落地
+      timeForceMinChars: 10,           // 时间触发落地最低字数（避免一两个字）
+      commitCooldownMs: 320,
+      minBufferedBeforeCommitMs: 160,
+      rt_vad: { threshold: 0.50, prefix_padding_ms: 300, silence_duration_ms: 800 }
+    },
+    ios: {
+      mode: "smart",
+      commitMs: 720,
+      thrHigh: 0.022, thrLow: 0.015,
+      softPause: 520, hardPause: 1600, maxRun: 5600,
+      minCommitChars: 14,
+      minCharsPerCommit: 6,
+      minFinalChars: 28,               // iOS 更严，杜绝碎句
+      finalizeGraceMs: 480,
+      maxSegmentSoftMs: 7000,
+      maxSegmentHardMs: 10000,
+      timeForceMinChars: 12,
+      commitCooldownMs: 380,
+      minBufferedBeforeCommitMs: 180,
+      rt_vad: { threshold: 0.54, prefix_padding_ms: 340, silence_duration_ms: 950 }
+    }
+  };
+  const preset = isIOS ? PRESETS.ios : PRESETS.desktop;
+
+  // —— UI 预设 —— //
+  window.addEventListener("DOMContentLoaded", () => {
+    $("mode").value = preset.mode;
+    $("commitMs").value = preset.commitMs;
+    $("thrHigh").value = preset.thrHigh;
+    $("thrLow").value  = preset.thrLow;
+    $("softPause").value = preset.softPause;
+    $("hardPause").value = preset.hardPause;
+    $("maxRun").value = preset.maxRun;
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = isIOS ? "iOS 稳定 + 7s/10s" : "桌面稳定 + 7s/10s";
+    document.querySelector(".title").appendChild(document.createTextNode(" "));
+    document.querySelector(".title").appendChild(pill);
+    $("presetNote").textContent = "若一直说话：7 秒尽量落地，最晚 10 秒必落地；仍保留提交/落地解耦与防 0ms。";
+  });
+
+  // —— WebRTC / Realtime —— //
+  let pc=null, dc=null, micStream=null, micTrack=null, ac=null, analyser=null, rafId=null;
+  let ephemeralKey=null, paused=false, fixedTimer=null;
+
+  // 语音状态
+  let speaking=false, lastVoiceOnTs=0, lastVoiceOffTs=0;
+
+  // 提交调度
+  let firstAudioTs=0, lastCommitTs=0, pendingCommitTimer=null, commitRequested=false, startedStreaming=false;
+
+  // 文本与翻译
+  const finalPairs=[]; let liveSrc=""; let liveTgt=""; let liveTransDebounce=null, liveTransReqId=0;
+
+  // —— only-new-text-commit —— //
+  let lastCommitTextLen = 0;
+  let charsSinceLastCommit = 0;
+
+  // —— 新：当前“句段”起始时间（用于 7s/10s 限制）——
+  let liveSegmentStartTs = 0;
+
+  // 噪声阈值
+  let noiseFloor=0, dynHigh=0, dynLow=0;
+
+  // 运行配置
+  let cfg = {
+    rtModel:"", sttModel:"", mode:"smart", langHint:"",
+    ttsVoice:"", commitMs:preset.commitMs, thrHigh:preset.thrHigh, thrLow:preset.thrLow,
+    softPause:preset.softPause, hardPause:preset.hardPause, maxRun:preset.maxRun,
+    translateOn:true, translateTarget:"auto", nearRealtime:true, apiKey:"",
+    minCommitChars: preset.minCommitChars,
+    minCharsPerCommit: preset.minCharsPerCommit,
+    minFinalChars: preset.minFinalChars,
+    finalizeGraceMs: preset.finalizeGraceMs,
+    maxSegmentSoftMs: preset.maxSegmentSoftMs,
+    maxSegmentHardMs: preset.maxSegmentHardMs,
+    timeForceMinChars: preset.timeForceMinChars,
+    commitCooldownMs: preset.commitCooldownMs,
+    minBufferedBeforeCommitMs: preset.minBufferedBeforeCommitMs,
+    rtVadPreset: { ...preset.rt_vad }
+  };
+
+  // 预览
+  const updatePreview = () => {
+    const lines=[];
+    for(const pair of finalPairs){
+      if(pair.src) lines.push(pair.src);
+      if(cfg.translateOn){
+        if(pair.tgt){ lines.push("-"+pair.tgt); lines.push(""); }
+        else { lines.push("(处理中…)"); lines.push(""); }
+      }
+    }
+    if(liveSrc){
+      lines.push(liveSrc);
+      if(cfg.translateOn){
+        if(liveTgt){ lines.push("【译·临时】"+liveTgt); lines.push(""); }
+        else if(cfg.nearRealtime){ lines.push("【译·临时】(…)"); lines.push(""); }
+      }
+    }
+    const full=lines.join("\n").trim();
+    const el=$("preview");
+    const stayBottom=(el.scrollTop+el.clientHeight+8>=el.scrollHeight);
+    el.value=full; if(stayBottom) el.scrollTop=el.scrollHeight;
+  };
+
+  // 绑定
+  $("btnStart").onclick = start;
+  $("btnToggle").onclick = togglePause;
+  $("btnStop").onclick = stopAll;
+  $("btnCopyPreview").onclick = copyPreview;
+  $("btnCopyFab").onclick = copyPreview;
+
+  async function start(){
+    cfg.apiKey   = $("apiKey").value.trim();
+    cfg.rtModel  = $("rtModel").value;
+    cfg.sttModel = $("sttModel").value;
+    cfg.mode     = $("mode").value;
+    cfg.langHint = $("langHint").value;
+    cfg.ttsVoice = $("ttsVoice").value;
+    cfg.commitMs   = clamp(parseInt($("commitMs").value||String(preset.commitMs),10), 300, 2000);
+    cfg.thrHigh    = clamp(parseFloat($("thrHigh").value||String(preset.thrHigh)), 0.005, 0.08);
+    cfg.thrLow     = clamp(parseFloat($("thrLow").value ||String(preset.thrLow)), 0.003, 0.08);
+    cfg.softPause  = clamp(parseInt($("softPause").value||String(preset.softPause),10), 300, 900);
+    cfg.hardPause  = clamp(parseInt($("hardPause").value||String(preset.hardPause),10), 900, 2200);
+    cfg.maxRun     = clamp(parseInt($("maxRun").value   ||String(preset.maxRun),10), 2000, 8000);
+    cfg.translateOn     = $("translateOn").value === "on";
+    cfg.translateTarget = $("translateTarget").value;
+    cfg.nearRealtime    = $("nearRealtime").value === "on";
+
+    if(!cfg.apiKey){ alert("请先输入 OpenAI API Key"); return; }
+
+    disableAll(true); setStatus("准备中…"); log("▶️ Start clicked");
+
+    try{
+      // Realtime session
+      const body = { model: cfg.rtModel }; if(cfg.ttsVoice) body.voice = cfg.ttsVoice;
+      const sessResp = await fetch("https://api.openai.com/v1/realtime/sessions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${cfg.apiKey}`, "Content-Type":"application/json", "OpenAI-Beta":"realtime=v1" },
+        body: JSON.stringify(body)
+      });
+      if(!sessResp.ok){ throw new Error("获取临时密钥失败: " + await sessResp.text()); }
+      const sess = await sessResp.json();
+      ephemeralKey = sess?.client_secret?.value;
+      if(!ephemeralKey) throw new Error("未拿到临时密钥");
+      log("✅ 临时密钥已获取","ok");
+
+      // WebRTC + DC
+      pc = new RTCPeerConnection();
+      const audioEl = new Audio(); audioEl.autoplay=true;
+      pc.ontrack = (e)=>{ audioEl.srcObject=e.streams[0]; };
+      dc = pc.createDataChannel("oai-events");
+
+      dc.onopen = () => {
+        log("📡 DataChannel 打开");
+        sendSessionUpdate();
+      };
+      dc.onmessage = (ev)=>{ try{ handleRealtimeEvent(JSON.parse(ev.data)); }catch{} };
+
+      // Mic & AudioContext
+      const audioConstraints = { channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:false };
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      micTrack = micStream.getAudioTracks()[0]; pc.addTrack(micTrack, micStream);
+
+      try{ ac = new (window.AudioContext||window.webkitAudioContext)({ latencyHint:"interactive", sampleRate:48000 }); }
+      catch{ ac = new (window.AudioContext||window.webkitAudioContext)(); }
+      const src = ac.createMediaStreamSource(micStream);
+      analyser = ac.createAnalyser(); analyser.fftSize=1024; src.connect(analyser);
+
+      // SDP
+      const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+      const rtcResp = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(cfg.rtModel)}`, {
+        method:"POST",
+        headers:{ "Authorization":`Bearer ${ephemeralKey}`, "Content-Type":"application/sdp", "OpenAI-Beta":"realtime=v1" },
+        body: offer.sdp
+      });
+      if(!rtcResp.ok){ throw new Error("建立 WebRTC 失败: " + await rtcResp.text()); }
+      const answer = { type:"answer", sdp: await rtcResp.text() }; await pc.setRemoteDescription(answer);
+
+      // 噪声底噪校准
+      setStatus("校准中…"); log("🧪 噪声底噪自校准（~0.7s）");
+      await calibrateNoiseFloor(720);
+      log(`📏 底噪=${noiseFloor.toFixed(5)} 动态阈 high=${(dynHigh||cfg.thrHigh).toFixed(5)} low=${(dynLow||cfg.thrLow).toFixed(5)}`);
+
+      firstAudioTs = performance.now(); startedStreaming = true;
+      lastCommitTextLen = 0; charsSinceLastCommit = 0;
+      liveSegmentStartTs = 0; // 等第一段文本到来时设置
+
+      loopEnergy(cfg);
+      if(cfg.mode === "fast"){ fixedTimer=setInterval(()=>{ if(!paused) requestCommit("timer"); }, cfg.commitMs); }
+
+      paused=false; setStatus("已连接 · 正在转写…");
+      $("btnToggle").textContent="暂停"; $("btnToggle").disabled=false;
+      $("btnStop").disabled=false; $("btnCopyPreview").disabled=false;
+      log("🎧 就绪，实时文本将在预览框滚动显示");
+    }catch(err){
+      log("❌ " + err.message, "danger");
+      setStatus("失败"); disableAll(false); cleanup();
+    }
+  }
+
+  // —— session.update —— //
+  function sendSessionUpdate(){
+    if(!dc) return;
+    const rtTurn = (cfg.mode === "smart")
+      ? { type:"server_vad",
+          threshold: cfg.rtVadPreset.threshold,
+          prefix_padding_ms: cfg.rtVadPreset.prefix_padding_ms,
+          silence_duration_ms: cfg.rtVadPreset.silence_duration_ms,
+          create_response:false, interrupt_response:true }
+      : null;
+    dc.send(JSON.stringify({
+      type:"session.update",
+      session:{
+        input_audio_transcription:{ model: cfg.sttModel, ...(cfg.langHint ? { language: cfg.langHint } : {}) },
+        turn_detection: rtTurn,
+        modalities:["text"]
+      }
+    }));
+    log(`🔧 session.update: silence=${cfg.rtVadPreset.silence_duration_ms}ms, thr=${cfg.rtVadPreset.threshold}`);
+  }
+
+  // —— 事件 —— //
+  function handleRealtimeEvent(ev){
+    const t = ev.type; if(!t) return;
+    if(t === "conversation.item.input_audio_transcription.completed"){
+      const text=(ev.transcript||"").trim(); if(!text) return;
+      const before = liveSrc.length;
+      liveSrc = mergeText(liveSrc, text);
+      const delta = Math.max(liveSrc.length - before, 0);
+      if(delta>0){
+        charsSinceLastCommit += delta;
+        if(before===0 && liveSrc.length>0){ liveSegmentStartTs = performance.now(); } // 记录本段起始
+      }
+
+      // 近实时翻译
+      if (cfg.translateOn && cfg.nearRealtime) {
+        if (liveTransDebounce) clearTimeout(liveTransDebounce);
+        const wait = isIOS ? 600 : 450;
+        liveTransDebounce = setTimeout(() => {
+          if (liveSrc && liveSrc.length >= (isIOS ? 26 : 16)) doLiveTranslate(liveSrc);
+        }, wait);
+      }
+
+      if (shouldFinalize(liveSrc)) finalizeLive();
+      updatePreview();
+    } else if (t === "error"){
+      const msg = (ev.error?.message || "").toLowerCase();
+      if (msg.includes("buffer too smal") || msg.includes("buffer too small")) {
+        cfg.minBufferedBeforeCommitMs = Math.min(cfg.minBufferedBeforeCommitMs + 20, 260);
+        log(`🛡️ auto-guard: minBufferedBeforeCommitMs → ${cfg.minBufferedBeforeCommitMs}`, "warn");
+      }
+      log("⚠️ Realtime 错误: " + (ev.error?.message || JSON.stringify(ev)), "warn");
+    } else if (t === "session.created"){
+      log("🟦 session.created");
+    }
+  }
+
+  // —— 文本合并与落地 —— //
+  function mergeText(prev, cur){
+    const cjk=/[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/;
+    const joiner=(cjk.test(prev)||cjk.test(cur))?"":" ";
+    if(!prev) return cur;
+    const overlap=longestOverlapSuffixPrefix(prev,cur);
+    const merged=prev+(overlap>0?cur.slice(overlap):(joiner+cur));
+    return merged.replace(/\s+/g," ").trim();
+  }
+  function longestOverlapSuffixPrefix(a,b){
+    const max=Math.min(a.length,b.length,24);
+    for(let k=max;k>3;k--){ if(a.slice(-k).toLowerCase()===b.slice(0,k).toLowerCase()) return k; }
+    return 0;
+  }
+
+  // 落地规则：必须达标；标点不再特权（除非也达标）。有长度上限保护。
+  function shouldFinalize(text){
+    if (!text) return false;
+    const punctuationEnd = /[。！？!?…．.]\s*$/.test(text);
+    const lenOK = text.length >= cfg.minFinalChars;
+    if (punctuationEnd && lenOK) return true;
+    const lenCut = isIOS ? 130 : 120;
+    if (text.length >= lenCut && /\s$/.test(text)) return true;
+    return false;
+  }
+
+  function finalizeLive(force=false){
+    if(!liveSrc) return;
+    if(!force && liveSrc.length < cfg.minFinalChars) return;
+    const idx = finalPairs.length;
+    finalPairs.push({ src: liveSrc, tgt: cfg.translateOn ? null : "" });
+    liveSrc = ""; liveTgt = "";
+    lastCommitTextLen = 0; charsSinceLastCommit = 0;
+    liveSegmentStartTs = 0;
+    updatePreview();
+    if (cfg.translateOn) translateSegment(idx).catch(()=>{});
+  }
+
+  // —— 噪声底噪自校准 —— //
+  async function calibrateNoiseFloor(ms=700){
+    if(!analyser) return;
+    const buf=new Float32Array(1024);
+    const t0=performance.now();
+    let acc=0,n=0;
+    while(performance.now()-t0<ms){
+      analyser.getFloatTimeDomainData(buf);
+      let sum=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; sum+=v*v; }
+      const rms=Math.sqrt(sum/buf.length);
+      acc+=rms; n++;
+      await new Promise(r=>setTimeout(r,20));
+    }
+    noiseFloor = n>0 ? acc/n : 0;
+    const mulHigh=isIOS?3.5:3.2, mulLow=isIOS?2.4:2.2;
+    dynHigh=Math.max(cfg.thrHigh, noiseFloor*mulHigh);
+    dynLow =Math.max(cfg.thrLow,  noiseFloor*mulLow);
+  }
+
+  // —— 能量循环：含 7s/10s 句龄限制 —— //
+  function loopEnergy(cfgLocal){
+    const { mode }=cfgLocal;
+    const buf=new Float32Array(1024);
+    let ema=0, alpha=0.3;
+
+    const tick=()=>{
+      if(!analyser) return;
+      analyser.getFloatTimeDomainData(buf);
+      let sum=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; sum+=v*v; }
+      const rms=Math.sqrt(sum/buf.length);
+      ema=alpha*rms+(1-alpha)*ema;
+
+      const high=dynHigh||cfg.thrHigh, low=dynLow||cfg.thrLow;
+      const now=performance.now();
+
+      if(!speaking && ema>high){ speaking=true; lastVoiceOnTs=now; }
+      if(speaking && ema<low){ speaking=false; lastVoiceOffTs=now; }
+
+      if(mode==="smart" && !paused){
+        // 软暂停：只提交
+        if(!speaking && (now-lastVoiceOffTs)>cfg.softPause){
+          const enoughText = (liveSrc && liveSrc.length>=cfg.minCommitChars);
+          const longQuiet  = (now-lastVoiceOffTs)>(cfg.hardPause*0.8);
+          if(enoughText || longQuiet){ requestCommit("softPause"); }
+        }
+        // 说太久：切一刀（提交）
+        if(speaking && (now-lastVoiceOnTs)>cfg.maxRun){ requestCommit("maxRun"); }
+
+        // 硬暂停：提交 + 达标落地 / 宽限强制落地
+        if(!speaking && (now-lastVoiceOffTs)>cfg.hardPause){
+          requestCommit("hardPause");
+          const quietFor = (now-lastVoiceOffTs);
+          if(liveSrc){
+            if(liveSrc.length >= cfg.minFinalChars){
+              finalizeLive();
+            }else if(quietFor > (cfg.hardPause + cfg.finalizeGraceMs)){
+              finalizeLive(true);
+            }
+          }
+        }
+
+        // —— 新：句龄限制（一直说也不会超过 7s/10s）——
+        if(liveSrc && liveSegmentStartTs){
+          const age = now - liveSegmentStartTs;
+          if(age >= cfg.maxSegmentHardMs){
+            requestCommit("maxSegHard");
+            finalizeLive(true);                 // 10s 强制落地
+          }else if(age >= cfg.maxSegmentSoftMs){
+            requestCommit("maxSegSoft");
+            if(liveSrc.length >= cfg.timeForceMinChars){
+              finalizeLive(true);               // 7s 优先落地（尽量）
+            }
+          }
+        }
+      }
+      rafId=requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  // —— 只在“有新文字时”才允许 commit（防 0.00ms）—— //
+  function requestCommit(reason=""){
+    const now=performance.now();
+    if(!startedStreaming){ scheduleCommit(cfg.minBufferedBeforeCommitMs, reason+"(notStarted)"); return; }
+
+    // 没有新文字 → 跳过（避免 0.00ms）
+    if(charsSinceLastCommit < cfg.minCharsPerCommit){
+      if(reason==="maxRun" || reason==="hardPause" || reason.startsWith("maxSeg")){
+        scheduleCommit(120, reason+"(waitNewText)");
+      }
+      return;
+    }
+
+    const sinceLast  = now - (lastCommitTs||0);
+    const needBuf = Math.max(cfg.minBufferedBeforeCommitMs - sinceLast, 0);
+    const needCd  = Math.max(cfg.commitCooldownMs - sinceLast, 0);
+    const wait = Math.max(needBuf, needCd, 0);
+    if(wait>0){ scheduleCommit(wait, reason); } else { doCommit(reason); }
+  }
+  function scheduleCommit(waitMs, reason=""){
+    if(commitRequested && pendingCommitTimer){ return; }
+    commitRequested=true;
+    pendingCommitTimer=setTimeout(()=>{ pendingCommitTimer=null; doCommit(reason+"(delayed)"); }, Math.ceil(waitMs));
+  }
+  function doCommit(reason=""){
+    try{
+      if(!dc) return;
+      // 二次防线：到真正发送前再检查一次是否有新文字
+      const added = Math.max(liveSrc.length - lastCommitTextLen, 0);
+      if(added < cfg.minCharsPerCommit){ commitRequested=false; return; }
+      dc.send(JSON.stringify({ type:"input_audio_buffer.commit" }));
+      lastCommitTs = performance.now();
+      lastCommitTextLen = liveSrc.length;
+      charsSinceLastCommit = 0;
+      commitRequested=false;
+      // log(`· commit ${reason}`, "muted");
+    }catch(e){ commitRequested=false; }
+  }
+
+  // —— 翻译 —— //
+  function pickTargetLanguage(){
+    if (cfg.translateTarget !== "auto") return cfg.translateTarget;
+    if (cfg.langHint === "zh") return "de";
+    if (cfg.langHint === "de" || cfg.langHint === "en") return "zh";
+    return "en";
+  }
+  async function doLiveTranslate(text){
+    const reqId=++liveTransReqId;
+    try{
+      const tgt=await translateText(text, pickTargetLanguage());
+      if(reqId===liveTransReqId){ liveTgt=tgt; updatePreview(); }
+    }catch(e){}
+  }
+  async function translateSegment(index){
+    const src=finalPairs[index]?.src||""; if(!src) return;
+    try{
+      const tgt=await translateText(src, pickTargetLanguage());
+      finalPairs[index].tgt=tgt; updatePreview();
+    }catch(e){
+      finalPairs[index].tgt="(翻译失败："+(e.message||"")+")"; updatePreview();
+      log("⚠️ 段落翻译失败: "+e.message, "warn");
+    }
+  }
+  async function translateText(text, targetLang){
+    const resp=await fetch("https://api.openai.com/v1/chat/completions",{
+      method:"POST",
+      headers:{ "Authorization":`Bearer ${cfg.apiKey}`, "Content-Type":"application/json" },
+      body: JSON.stringify({
+        model:"gpt-4o-mini", temperature:0.2,
+        messages:[
+          { role:"system", content:
+            `You are a high-quality, low-latency translator.
+             Translate the user's text into ${targetLang}.
+             Requirements: faithful, fluent, keep punctuation, no extra comments, no brackets, no quotes.
+             If the text seems partial, still translate what's available.`},
+          { role:"user", content:text }
+        ]
+      })
+    });
+    if(!resp.ok){ throw new Error("翻译接口错误："+await resp.text()); }
+    const data=await resp.json();
+    return (data?.choices?.[0]?.message?.content||"").trim();
+  }
+
+  // —— 控制 —— //
+  function togglePause(){
+    if(!micTrack) return;
+    if(!paused){
+      micTrack.enabled=false; paused=true;
+      setStatus("已暂停 · 不再采集音频"); $("btnToggle").textContent="继续"; log("⏸️ 已暂停麦克风");
+    }else{
+      micTrack.enabled=true; paused=false;
+      firstAudioTs=performance.now(); startedStreaming=true;
+      setStatus("已连接 · 正在转写…"); $("btnToggle").textContent="暂停"; log("▶️ 继续采集麦克风");
+    }
+  }
+  function copyPreview(){
+    const text=$("preview").value||"";
+    navigator.clipboard.writeText(text)
+      .then(()=>log("📋 已复制：预览文本","ok"))
+      .catch(e=>log("复制失败: "+e.message,"warn"));
+  }
+  function stopAll(){ setStatus("已停止"); log("⏹️ 停止"); disableAll(false); cleanup(); }
+  function disableAll(working){
+    $("btnStart").disabled=working; $("btnToggle").disabled=true;
+    $("btnStop").disabled=!working; $("btnCopyPreview").disabled=true;
+  }
+  function cleanup(){
+    if(pendingCommitTimer){ clearTimeout(pendingCommitTimer); pendingCommitTimer=null; }
+    if(fixedTimer){ clearInterval(fixedTimer); fixedTimer=null; }
+    if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
+    try{ dc&&dc.close(); }catch{} try{ pc&&pc.close(); }catch{}
+    try{ micTrack&&micTrack.stop(); }catch{}
+    try{ micStream&&micStream.getTracks().forEach(t=>t.stop()); }catch{}
+    if(ac){ try{ ac.close(); }catch{} ac=null; }
+    pc=dc=micTrack=micStream=analyser=null; ephemeralKey=null; paused=false;
+    speaking=false; noiseFloor=0; dynHigh=0; dynLow=0;
+    firstAudioTs=0; lastCommitTs=0; startedStreaming=false; commitRequested=false;
+    finalPairs.length=0; liveSrc=""; liveTgt=""; lastCommitTextLen=0; charsSinceLastCommit=0;
+    liveSegmentStartTs=0;
+    updatePreview();
+  }
+
+  // —— 工具 —— //
+  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+
+})();
+</script>
+</body>
+</html>
