@@ -54,7 +54,6 @@
     </div>
 
     <div class="body">
-      <!-- 顶部核心输入 -->
       <div class="row">
         <div>
           <label>OpenAI API Key（本地调试用；线上改为后端签发临时密钥）</label>
@@ -76,7 +75,6 @@
         </div>
       </div>
 
-      <!-- 可折叠参数（默认收起） -->
       <details class="settings">
         <summary><span class="chev"></span><b>参数设置（可收起/展开）</b><span class="muted small"> · 断句/延迟/翻译</span></summary>
         <div class="controls">
@@ -126,8 +124,6 @@
               <option>marin</option><option>cedar</option>
             </select>
           </div>
-
-          <!-- —— 翻译相关 —— -->
           <div>
             <label>实时翻译</label>
             <select id="translateOn">
@@ -157,7 +153,6 @@
         </div>
       </details>
 
-      <!-- 控制按钮 -->
       <div class="row btns">
         <button class="primary" id="btnStart">开始</button>
         <button class="ghost" id="btnToggle" disabled>暂停</button>
@@ -165,7 +160,6 @@
         <button class="ghost" id="btnCopyPreview" disabled>复制预览文本</button>
       </div>
 
-      <!-- 唯一的实时文本预览框 + 复制 -->
       <label>实时文本预览（原文 + 译文，单窗口展示；译文自动插在原文下一行）</label>
       <div class="preview-wrap">
         <button class="copy-fab" id="btnCopyFab">复制</button>
@@ -187,53 +181,37 @@
     $("log").appendChild(p); $("log").scrollTop=$("log").scrollHeight; };
   const setStatus = (txt) => $("status").textContent = txt;
 
-  // 平台判断（iOS/iPadOS）
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-  // WebRTC / Realtime
   let pc=null, dc=null, micStream=null, micTrack=null, ac=null, analyser=null, rafId=null;
   let ephemeralKey=null, paused=false, fixedTimer=null;
 
-  // 语音状态
   let speaking=false, lastVoiceOnTs=0, lastVoiceOffTs=0, lastCommit=0;
 
-  // 文本与翻译聚合
   const finalPairs = [];
   let liveSrc=""; let liveTgt="";
   let liveTransDebounce=null, liveTransReqId=0;
 
-  // 启动时读取的配置（含翻译）
   let cfg = {
     rtModel: "", sttModel: "", mode:"smart", langHint:"",
     ttsVoice:"", commitMs:650, thrHigh:0.018, thrLow:0.012, softPause:480, hardPause:1200, maxRun:4800,
     translateOn:true, translateTarget:"auto", nearRealtime:true, apiKey:""
   };
 
-  // 预览更新
   const updatePreview = () => {
     const lines = [];
     for (const pair of finalPairs) {
       if (pair.src) lines.push(pair.src);
       if (cfg.translateOn) {
-        if (pair.tgt) {
-          lines.push("-" + pair.tgt);
-          lines.push("");
-        } else {
-          lines.push("(处理中…)");
-          lines.push("");
-        }
+        if (pair.tgt) { lines.push("-" + pair.tgt); lines.push(""); }
+        else { lines.push("(处理中…)"); lines.push(""); }
       }
     }
     if (liveSrc) {
       lines.push(liveSrc);
       if (cfg.translateOn) {
-        if (liveTgt) {
-          lines.push("【译·临时】" + liveTgt);
-          lines.push("");
-        } else if (cfg.nearRealtime) {
-          lines.push("【译·临时】(…)");
-          lines.push("");
-        }
+        if (liveTgt) { lines.push("【译·临时】" + liveTgt); lines.push(""); }
+        else if (cfg.nearRealtime) { lines.push("【译·临时】(…)"); lines.push(""); }
       }
     }
     const full = lines.join("\n").trim();
@@ -243,7 +221,6 @@
     if (stayBottom) el.scrollTop = el.scrollHeight;
   };
 
-  // 绑定按钮
   $("btnStart").onclick = start;
   $("btnToggle").onclick = togglePause;
   $("btnStop").onclick = stopAll;
@@ -269,7 +246,7 @@
 
     if(!cfg.apiKey){ alert("请先输入 OpenAI API Key"); return; }
 
-    // iOS 预设（仅当用户还维持默认值时，轻微调整为更稳的长句参数）
+    // iOS 预设（仅当用户没改默认值时）
     try{
       if(isIOS){
         if ($("thrHigh").value === "0.018") cfg.thrHigh = 0.010;
@@ -283,7 +260,7 @@
     disableAll(true); setStatus("准备中…"); log("▶️ Start clicked");
 
     try{
-      // 1) 获取临时密钥（Realtime）
+      // 1) 会话密钥
       const body = { model: cfg.rtModel }; if (cfg.ttsVoice) body.voice = cfg.ttsVoice;
       const sessResp = await fetch("https://api.openai.com/v1/realtime/sessions", {
         method: "POST",
@@ -296,20 +273,22 @@
       if(!ephemeralKey) throw new Error("未拿到临时密钥");
       log("✅ 临时密钥已获取","ok");
 
-      // 2) WebRTC + DataChannel
+      // 2) WebRTC + DC
       pc = new RTCPeerConnection();
       const audioEl = new Audio(); audioEl.autoplay = true;
       pc.ontrack = (e)=>{ audioEl.srcObject = e.streams[0]; };
       dc = pc.createDataChannel("oai-events");
 
+      // FIX v2: 始终启用 server_vad（更长的 silence），避免“说很久不落地”
       dc.onopen = () => {
         log("📡 DataChannel 打开");
-        const turnDetection = (cfg.mode === "smart")
-          ? (isIOS
-              ? null
-              : { type:"server_vad", threshold:0.6, prefix_padding_ms:300, silence_duration_ms:800,
-                  create_response:false, interrupt_response:true })
-          : null;
+        const turnDetection =
+          { type:"server_vad",
+            threshold: 0.7,                 // 稍更保守，减少碎段
+            prefix_padding_ms: 300,
+            silence_duration_ms: isIOS ? 1400 : 1200,
+            create_response: false,
+            interrupt_response: true };
 
         const sessionUpdate = {
           type: "session.update",
@@ -320,12 +299,45 @@
           }
         };
         dc.send(JSON.stringify(sessionUpdate));
-        log(`🔧 已发送 session.update（mode=${cfg.mode}, iOS=${isIOS}）`);
+        log(`🔧 session.update 已发送（server_vad on, silence=${turnDetection.silence_duration_ms}ms）`);
       };
 
-      dc.onmessage = (ev) => { try{ handleRealtimeEvent(JSON.parse(ev.data)); }catch{} };
+      // FIX v2: 处理 delta/complete 两种转写事件
+      dc.onmessage = (ev) => {
+        try{
+          const e = JSON.parse(ev.data);
+          const t = e.type;
+          if(!t) return;
 
-      // 3) 麦克风 + WebAudio RMS（iOS 关闭激进处理）
+          // 近实时字符（delta）
+          if (t === "conversation.item.input_audio_transcription.delta") {
+            const txt = (e.delta || "").trim();
+            if (txt) {
+              liveSrc = mergeText(liveSrc, txt);
+              if (cfg.translateOn && cfg.nearRealtime) {
+                if (liveTransDebounce) clearTimeout(liveTransDebounce);
+                liveTransDebounce = setTimeout(() => doLiveTranslate(liveSrc), 500);
+              }
+              updatePreview();
+            }
+          }
+
+          // 句子完成（completed）—— 立即落地，不再等待本地阈值
+          if (t === "conversation.item.input_audio_transcription.completed") {
+            const text = (e.transcript || "").trim();
+            if (text) {
+              liveSrc = mergeText(liveSrc, text);
+            }
+            // 直接落地（不做“decentBreak”判断）
+            finalizeFromServer();              // ✅ 关键：保证一分钟内一定有句子落地
+          }
+
+          if (t === "session.created") log("🟦 session.created");
+          if (t === "error") log("⚠️ Realtime 错误: " + (e.error?.message || JSON.stringify(e)), "warn");
+        }catch{}
+      };
+
+      // 3) 麦克风（iOS 关闭 AGC/NS/AEC）
       const audioConstraints = isIOS
         ? { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: 48000 }
         : { channelCount: 1, noiseSuppression: true, echoCancellation: true };
@@ -339,7 +351,7 @@
       const src = ac.createMediaStreamSource(micStream);
       analyser = ac.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
 
-      // 4) SDP 交换（关闭编码器级 VAD/DTX）
+      // 4) SDP（关闭编码器级 VAD/DTX）
       const offer = await pc.createOffer({ voiceActivityDetection: false });
       await pc.setLocalDescription(offer);
       const rtcResp = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(cfg.rtModel)}`, {
@@ -350,45 +362,21 @@
       if(!rtcResp.ok){ throw new Error("建立 WebRTC 失败: " + await rtcResp.text()); }
       const answer = { type:"answer", sdp: await rtcResp.text() }; await pc.setRemoteDescription(answer);
 
-      // 5) 能量循环 +（可选）固定微分段
+      // 5) 本地能量循环（保留；但不再控制最终落地）
       loopEnergy(cfg);
       if(cfg.mode === "fast"){ fixedTimer = setInterval(()=>{ if(!paused) safeCommit(); }, cfg.commitMs); }
 
       paused=false; setStatus("已连接 · 正在转写…");
       $("btnToggle").textContent="暂停"; $("btnToggle").disabled=false;
       $("btnStop").disabled=false; $("btnCopyPreview").disabled=false;
-      log("🎧 就绪，实时文本将在预览框滚动显示");
+      log("🎧 就绪，服务端分句完成后会立刻落地展示");
     }catch(err){
       log("❌ " + err.message, "danger");
       setStatus("失败"); disableAll(false); cleanup();
     }
   }
 
-  // 收到 Realtime 事件
-  function handleRealtimeEvent(ev){
-    const t = ev.type; if(!t) return;
-    if(t === "conversation.item.input_audio_transcription.completed"){
-      const text = (ev.transcript || "").trim(); if(!text) return;
-      liveSrc = mergeText(liveSrc, text);
-
-      // 近实时译文（可选，防抖）
-      if (cfg.translateOn && cfg.nearRealtime) {
-        if (liveTransDebounce) clearTimeout(liveTransDebounce);
-        liveTransDebounce = setTimeout(() => {
-          doLiveTranslate(liveSrc);
-        }, 600);
-      }
-
-      if (shouldFinalize(liveSrc)) finalizeLive();  // 句末/较长 -> 落地 & 译
-      updatePreview();
-    }else if(t === "session.created"){
-      log("🟦 session.created");
-    }else if(t === "error"){
-      log("⚠️ Realtime 错误: " + (ev.error?.message || JSON.stringify(ev)), "warn");
-    }
-  }
-
-  // 文本合并与落地
+  // —— 仅用于展示的合并 —— //
   function mergeText(prev, cur){
     const cjk = /[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/;
     const joiner = (cjk.test(prev) || cjk.test(cur)) ? "" : " ";
@@ -403,18 +391,9 @@
     return 0;
   }
 
-  // 更保守的“值得落地”判断（标点或长度达到 40）
-  function decentBreak(text){
-    return /[。！？!?…．.]\s*$/.test(text) || text.length >= 40;
-  }
-  function shouldFinalize(text){
-    return decentBreak(text);
-  }
-
-  // 支持硬落地（force）
-  function finalizeLive(force=false){
-    if(!liveSrc) return;
-    if(!force && !decentBreak(liveSrc)) return;
+  // FIX v2: 专门给“服务端 completed”用的强制落地
+  function finalizeFromServer(){
+    if (!liveSrc) return;
     const idx = finalPairs.length;
     finalPairs.push({ src: liveSrc, tgt: cfg.translateOn ? null : "" });
     liveSrc = ""; liveTgt = "";
@@ -422,11 +401,11 @@
     if (cfg.translateOn) translateSegment(idx).catch(()=>{});
   }
 
-  // 能量检测 + 智能 commit（更平滑的 EMA + 最短发声/静音时长）
+  // 能量循环（保留：用于软/硬暂停的兜底与 UI 感知）
   function loopEnergy(cfgLocal){
     const { mode, thrHigh, thrLow, softPause, hardPause, maxRun } = cfgLocal;
     const buf = new Float32Array(1024);
-    let ema = 0, alpha = 0.08; // 慢一点，避免抖动
+    let ema = 0, alpha = 0.08;
     const minVoiceOnMs  = 180;
     const minVoiceOffMs = 220;
     let tentativeOnTs = 0, tentativeOffTs = 0;
@@ -443,35 +422,20 @@
       if(!speaking) {
         if(ema > thrHigh) {
           if (!tentativeOnTs) tentativeOnTs = now;
-          if (now - tentativeOnTs >= minVoiceOnMs) {
-            speaking = true; lastVoiceOnTs = now; tentativeOnTs = 0;
-          }
-        } else {
-          tentativeOnTs = 0;
-        }
+          if (now - tentativeOnTs >= minVoiceOnMs) { speaking = true; lastVoiceOnTs = now; tentativeOnTs = 0; }
+        } else { tentativeOnTs = 0; }
       } else {
         if(ema < thrLow) {
           if (!tentativeOffTs) tentativeOffTs = now;
-          if (now - tentativeOffTs >= minVoiceOffMs) {
-            speaking = false; lastVoiceOffTs = now; tentativeOffTs = 0;
-          }
-        } else {
-          tentativeOffTs = 0;
-        }
+          if (now - tentativeOffTs >= minVoiceOffMs) { speaking = false; lastVoiceOffTs = now; tentativeOffTs = 0; }
+        } else { tentativeOffTs = 0; }
       }
 
+      // 这里不再做“是否落地”的判断，落地交给 server_vad 的 completed
+      // 仅保留硬暂停兜底：若真的很久没 completed，就强制显示一段，避免“憋很久”
       if(mode === "smart" && !paused){
-        // 软暂停：仅当当前片段“像一句话”才 commit
-        if(!speaking && (now - lastVoiceOffTs) > softPause && (now - lastCommit) > 250){
-          if (decentBreak(liveSrc)) { safeCommit(); lastCommit = now; }
-        }
-        // 最长连续：也加保护
-        if(speaking && (now - lastVoiceOnTs) > maxRun && (now - lastCommit) > 300){
-          if (decentBreak(liveSrc)) { safeCommit(); lastCommit = now; }
-        }
-        // 硬暂停：强制落地，哪怕没有标点
-        if(!speaking && (now - lastVoiceOffTs) > hardPause && (finalPairs.length>0 || liveSrc)){
-          if (liveSrc) finalizeLive(true);
+        if(!speaking && (now - lastVoiceOffTs) > hardPause && liveSrc){
+          finalizeFromServer(); // 兜底强制落地
         }
       }
       rafId = requestAnimationFrame(tick);
@@ -481,39 +445,31 @@
 
   function safeCommit(){ try{ dc && dc.send(JSON.stringify({ type:"input_audio_buffer.commit" })); }catch{} }
 
-  // —— 翻译逻辑 —— //
+  // —— 翻译 —— //
   function pickTargetLanguage(){
     if (cfg.translateTarget !== "auto") return cfg.translateTarget;
     if (cfg.langHint === "zh") return "de";
     if (cfg.langHint === "de" || cfg.langHint === "en") return "zh";
     return "en";
   }
-
   async function doLiveTranslate(text){
     const reqId = ++liveTransReqId;
     try{
       const tgt = await translateText(text, pickTargetLanguage());
-      if (reqId === liveTransReqId) {
-        liveTgt = tgt;
-        updatePreview();
-      }
+      if (reqId === liveTransReqId) { liveTgt = tgt; updatePreview(); }
     }catch(e){}
   }
-
   async function translateSegment(index){
     const src = finalPairs[index]?.src || "";
     if (!src) return;
     try{
       const tgt = await translateText(src, pickTargetLanguage());
-      finalPairs[index].tgt = tgt;
-      updatePreview();
+      finalPairs[index].tgt = tgt; updatePreview();
     }catch(e){
-      finalPairs[index].tgt = "(翻译失败：" + (e.message||"") + ")";
-      updatePreview();
+      finalPairs[index].tgt = "(翻译失败：" + (e.message||"") + ")"; updatePreview();
       log("⚠️ 段落翻译失败: " + e.message, "warn");
     }
   }
-
   async function translateText(text, targetLang){
     const resp = await fetch("https://api.openai.com/v1/chat/completions",{
       method:"POST",
@@ -523,24 +479,19 @@
         temperature: 0.2,
         messages: [
           { role:"system", content:
-            `You are a high-quality, low-latency translator. 
+            `You are a high-quality, low-latency translator.
              Translate the user's text into ${targetLang}.
-             Requirements: faithful, fluent, keep punctuation, no extra comments, no brackets, no quotes.
-             If the text seems partial, still translate what's available.`},
+             Requirements: faithful, fluent, keep punctuation, no extra comments.`},
           { role:"user", content: text }
         ]
       })
     });
-    if(!resp.ok){
-      const t = await resp.text();
-      throw new Error("翻译接口错误：" + t);
-    }
+    if(!resp.ok){ throw new Error("翻译接口错误：" + await resp.text()); }
     const data = await resp.json();
-    const out = data?.choices?.[0]?.message?.content || "";
-    return (out||"").trim();
+    return (data?.choices?.[0]?.message?.content || "").trim();
   }
 
-  // 控制与工具
+  // 控制
   function togglePause(){
     if(!micTrack) return;
     if(!paused){
@@ -557,7 +508,7 @@
       .then(()=>log("📋 已复制：预览文本","ok"))
       .catch(e=>log("复制失败: "+e.message,"warn"));
   }
-  function stopAll(){ setStatus("已停止"); log("⏹️ 停止"); disableAll(false); cleanup(); }
+  function stopAll(){ setStatus("已停止"); log("⛔ 停止"); disableAll(false); cleanup(); }
   function disableAll(working){
     $("btnStart").disabled = working; $("btnToggle").disabled = true;
     $("btnStop").disabled = !working; $("btnCopyPreview").disabled = true;
@@ -575,7 +526,6 @@
     updatePreview();
   }
 
-  // 工具函数
   const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
 })();
 </script>
