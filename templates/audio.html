@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>实时语音转写 · 单预览框（可收起参数）</title>
+<style>
+  :root{--bg:#0b1020;--panel:#111936;--text:#e7ecff;--muted:#93a4c3;--line:#1f2a4d;
+    --brand:#7c9dfc;--ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--shadow:0 20px 50px rgba(3,8,23,.4)}
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b1020,#0f1530 60%,#0b1020);color:var(--text);
+       font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
+  .card{background:linear-gradient(180deg,#0f1633,#0e1630);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+  .header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:space-between}
+  .title{font-size:18px;font-weight:700;letter-spacing:.2px}
+  .pill{border:1px solid var(--line);color:var(--muted);padding:4px 8px;border-radius:999px;font-size:12px}
+  .body{padding:16px 20px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  .row > *{flex:1}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+  input,select,button,textarea{background:#0b122b;border:1px solid var(--line);color:var(--text);
+    border-radius:10px;padding:10px 12px;outline:none}
+  input::placeholder{color:#6b7280}
+  select{cursor:pointer}
+  button{cursor:pointer;transition:.15s ease;border:1px solid #2a3870}
+  button.primary{background:linear-gradient(180deg,#4f6df7,#4a61e6);border:none}
+  button.ghost{background:#0b122b}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .btns{display:flex;gap:10px;flex-wrap:wrap}
+  .status{font-size:13px;color:var(--muted)}
+  .log{background:#0b122b;border:1px dashed #213069;border-radius:12px;padding:12px;height:140px;overflow:auto}
+  /* 预览框 + 复制按钮 */
+  .preview-wrap{position:relative;margin-top:6px}
+  #preview{width:100%;height:520px;resize:vertical}
+  .copy-fab{position:absolute;right:8px;top:8px;background:#101a3b;border:1px solid #2a3870;border-radius:8px;padding:6px 10px;font-size:12px}
+  /* 可折叠参数 */
+  details.settings{margin:14px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  details.settings[open]{box-shadow:var(--shadow)}
+  details.settings summary{list-style:none;cursor:pointer;background:#0d1534;padding:12px 14px;display:flex;align-items:center;gap:10px;
+    user-select:none;border-bottom:1px solid var(--line)}
+  details.settings summary::-webkit-details-marker{display:none}
+  .chev{width:10px;height:10px;border-right:2px solid #7c9dfc;border-bottom:2px solid #7c9dfc;transform:rotate(-45deg);transition:.2s}
+  details.settings[open] .chev{transform:rotate(45deg)}
+  .controls{padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media (max-width:1000px){.controls{grid-template-columns:1fr}}
+  .small{font-size:12px} .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="header">
+      <div class="title">实时语音转写 <span class="pill">智能分句 · 单预览框</span></div>
+      <div class="status" id="status">未连接</div>
+    </div>
+
+    <div class="body">
+      <!-- 顶部核心输入 -->
+      <div class="row">
+        <div>
+          <label>OpenAI API Key（本地调试用；线上请改后端签发临时密钥）</label>
+          <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+        </div>
+        <div>
+          <label>Realtime 会话模型</label>
+          <select id="rtModel">
+            <option value="gpt-4o-mini-realtime-preview-2024-12-17" selected>gpt-4o-mini-realtime</option>
+            <option value="gpt-4o-realtime-preview-2024-12-17">gpt-4o-realtime</option>
+          </select>
+        </div>
+        <div>
+          <label>转写模型</label>
+          <select id="sttModel">
+            <option value="gpt-4o-mini-transcribe" selected>gpt-4o-mini-transcribe</option>
+            <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 可折叠参数（默认收起） -->
+      <details class="settings">
+        <summary><span class="chev"></span><b>参数设置（可收起/展开）</b><span class="muted small"> · 断句与延迟的取舍</span></summary>
+        <div class="controls">
+          <div>
+            <label>模式</label>
+            <select id="mode">
+              <option value="smart" selected>智能分句（默认）</option>
+              <option value="fast">低延迟（固定间隔微分段）</option>
+            </select>
+          </div>
+          <div>
+            <label>语言提示（可选）</label>
+            <select id="langHint">
+              <option value="">Auto</option><option value="zh" selected>中文</option>
+              <option value="de">Deutsch</option><option value="en">English</option>
+              <option value="ja">日本語</option><option value="fr">Français</option><option value="es">Español</option>
+            </select>
+          </div>
+          <div>
+            <label>固定分段间隔 ms（低延迟模式用，默认650）</label>
+            <input id="commitMs" type="number" min="300" max="2000" value="650" />
+          </div>
+          <div>
+            <label>能量阈值 高/低（默认 0.018 / 0.012）</label>
+            <div style="display:flex;gap:8px">
+              <input id="thrHigh" type="number" step="0.001" min="0.005" max="0.08" value="0.018" />
+              <input id="thrLow"  type="number" step="0.001" min="0.003" max="0.08" value="0.012" />
+            </div>
+          </div>
+          <div>
+            <label>软暂停/硬暂停 ms（默认 380 / 1100）</label>
+            <div style="display:flex;gap:8px">
+              <input id="softPause" type="number" min="120" max="800" value="380" />
+              <input id="hardPause" type="number" min="500" max="2000" value="1100" />
+            </div>
+          </div>
+          <div>
+            <label>最长连续片段 ms（默认 4800）</label>
+            <input id="maxRun" type="number" min="1500" max="7000" value="4800" />
+          </div>
+          <div>
+            <label>TTS 输出（可选）</label>
+            <select id="ttsVoice">
+              <option value="" selected>禁用（仅转写）</option>
+              <option>alloy</option><option>ash</option><option>ballad</option><option>coral</option>
+              <option>echo</option><option>sage</option><option>shimmer</option><option>verse</option>
+              <option>marin</option><option>cedar</option>
+            </select>
+          </div>
+        </div>
+      </details>
+
+      <!-- 控制按钮 -->
+      <div class="row btns">
+        <button class="primary" id="btnStart">开始</button>
+        <button class="ghost" id="btnToggle" disabled>暂停</button>
+        <button class="ghost" id="btnStop" disabled>停止</button>
+        <button class="ghost" id="btnCopyPreview" disabled>复制预览文本</button>
+      </div>
+
+      <!-- 唯一的实时文本预览框 + 复制 -->
+      <label>实时文本预览（合并 live + final，单窗口展示）</label>
+      <div class="preview-wrap">
+        <button class="copy-fab" id="btnCopyFab">复制</button>
+        <textarea id="preview" class="mono" placeholder="开始后，这里将滚动显示你的长句实时转写…"></textarea>
+      </div>
+
+      <p class="muted small">提示：若想更连贯，把 <b>软暂停</b> 调到 450–520ms、<b>硬暂停</b> 到 1200–1400ms，或把 <b>高阈值</b> 提到 0.020。</p>
+
+      <label>系统日志</label>
+      <div class="log mono small" id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const log = (msg, cls="") => { const p=document.createElement("div"); p.textContent=msg; if(cls)p.className=cls;
+    $("log").appendChild(p); $("log").scrollTop=$("log").scrollHeight; };
+  const setStatus = (txt) => $("status").textContent = txt;
+
+  // WebRTC / Realtime
+  let pc=null, dc=null, micStream=null, micTrack=null, ac=null, analyser=null, rafId=null;
+  let ephemeralKey=null, paused=false, fixedTimer=null;
+
+  // 语音状态
+  let speaking=false, lastVoiceOnTs=0, lastVoiceOffTs=0, lastCommit=0;
+
+  // 文本聚合
+  let liveText=""; const finalLines=[];
+
+  // 预览更新：把 final 累积 + live 合成一个文本框展示
+  const updatePreview = () => {
+    const base = finalLines.join("\n").trim();
+    const full = base + (liveText ? (base ? "\n" : "") + liveText : "");
+    const el = $("preview");
+    const stayBottom = (el.scrollTop + el.clientHeight + 8 >= el.scrollHeight);
+    el.value = full;
+    if(stayBottom) el.scrollTop = el.scrollHeight;
+  };
+
+  // 绑定按钮
+  $("btnStart").onclick = start;
+  $("btnToggle").onclick = togglePause;
+  $("btnStop").onclick = stopAll;
+  $("btnCopyPreview").onclick = copyPreview;
+  $("btnCopyFab").onclick = copyPreview;
+
+  async function start(){
+    const apiKey = $("apiKey").value.trim();
+    const rtModel = $("rtModel").value;
+    const sttModel = $("sttModel").value;
+    const mode = $("mode").value;
+    const lang = $("langHint").value;
+    const ttsVoice = $("ttsVoice").value;
+
+    const commitMs = clamp(parseInt($("commitMs").value||"650",10), 300, 2000);
+    const thrHigh  = clamp(parseFloat($("thrHigh").value||"0.018"), 0.005, 0.08);
+    const thrLow   = clamp(parseFloat($("thrLow").value ||"0.012"), 0.003, 0.08);
+    const softPause= clamp(parseInt($("softPause").value||"380",10), 120, 800);
+    const hardPause= clamp(parseInt($("hardPause").value||"1100",10), 500, 2000);
+    const maxRun   = clamp(parseInt($("maxRun").value   ||"4800",10), 1500, 7000);
+
+    if(!apiKey){ alert("请先输入 OpenAI API Key"); return; }
+
+    disableAll(true); setStatus("准备中…"); log("▶️ Start clicked");
+
+    try{
+      // 1) 换临时密钥（只在选择具体 voice 时才传 voice）
+      const body = { model: rtModel }; if (ttsVoice) body.voice = ttsVoice;
+      const sessResp = await fetch("https://api.openai.com/v1/realtime/sessions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type":"application/json", "OpenAI-Beta":"realtime=v1" },
+        body: JSON.stringify(body)
+      });
+      if(!sessResp.ok){ throw new Error("获取临时密钥失败: " + await sessResp.text()); }
+      const sess = await sessResp.json();
+      ephemeralKey = sess?.client_secret?.value;
+      if(!ephemeralKey) throw new Error("未拿到临时密钥");
+      log("✅ 临时密钥已获取","ok");
+
+      // 2) WebRTC + DataChannel
+      pc = new RTCPeerConnection();
+      const audioEl = new Audio(); audioEl.autoplay = true;
+      pc.ontrack = (e)=>{ audioEl.srcObject = e.streams[0]; };
+      dc = pc.createDataChannel("oai-events");
+
+      dc.onopen = () => {
+        log("📡 DataChannel 打开");
+        // 智能分句：用 server_vad；低延迟：关闭（null），依靠本地 commit
+        const sessionUpdate = {
+          type: "session.update",
+          session: {
+            input_audio_transcription: { model: sttModel, ...(lang ? { language: lang } : {}) },
+            turn_detection: (mode === "smart")
+              ? { type:"server_vad", threshold:0.5, prefix_padding_ms:300, silence_duration_ms:600,
+                  create_response:false, interrupt_response:true }
+              : null,
+            modalities: ["text"]
+          }
+        };
+        dc.send(JSON.stringify(sessionUpdate));
+        log(`🔧 已发送 session.update（mode=${mode}）`);
+      };
+
+      dc.onmessage = (ev) => { try{ handleRealtimeEvent(JSON.parse(ev.data)); }catch{} };
+
+      // 3) 麦克风 + WebAudio RMS
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, noiseSuppression:true, echoCancellation:true }});
+      micTrack = micStream.getAudioTracks()[0]; pc.addTrack(micTrack, micStream);
+
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ac.createMediaStreamSource(micStream);
+      analyser = ac.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
+
+      // 4) SDP 交换
+      const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+      const rtcResp = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(rtModel)}`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${ephemeralKey}`, "Content-Type":"application/sdp", "OpenAI-Beta":"realtime=v1" },
+        body: offer.sdp
+      });
+      if(!rtcResp.ok){ throw new Error("建立 WebRTC 失败: " + await rtcResp.text()); }
+      const answer = { type:"answer", sdp: await rtcResp.text() }; await pc.setRemoteDescription(answer);
+
+      // 5) 能量循环 +（可选）固定微分段
+      loopEnergy({ mode, thrHigh, thrLow, softPause, hardPause, maxRun, commitMs });
+      if(mode === "fast"){ fixedTimer = setInterval(()=>{ if(!paused) safeCommit(); }, commitMs); }
+
+      paused=false; setStatus("已连接 · 正在转写…");
+      $("btnToggle").textContent="暂停"; $("btnToggle").disabled=false;
+      $("btnStop").disabled=false; $("btnCopyPreview").disabled=false;
+      log("🎧 就绪，实时文本将在预览框滚动显示");
+    }catch(err){
+      log("❌ " + err.message, "danger");
+      setStatus("失败"); disableAll(false); cleanup();
+    }
+  }
+
+  function handleRealtimeEvent(ev){
+    const t = ev.type; if(!t) return;
+    if(t === "conversation.item.input_audio_transcription.completed"){
+      const text = (ev.transcript || "").trim(); if(!text) return;
+      liveText = mergeText(liveText, text);          // 合并到 live 行
+      if (shouldFinalize(liveText)) finalizeLive();  // 遇到句末标点或很长 -> 落地
+      updatePreview();                               // 单预览框更新
+    }else if(t === "session.created"){
+      log("🟦 session.created");
+    }else if(t === "error"){
+      log("⚠️ Realtime 错误: " + (ev.error?.message || JSON.stringify(ev)), "warn");
+    }
+  }
+
+  // 文本合并与落地
+  function mergeText(prev, cur){
+    const cjk = /[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/;
+    const joiner = (cjk.test(prev) || cjk.test(cur)) ? "" : " ";
+    if(!prev) return cur;
+    const overlap = longestOverlapSuffixPrefix(prev, cur);
+    const merged = prev + (overlap>0 ? cur.slice(overlap) : (joiner + cur));
+    return merged.replace(/\s+/g," ").trim();
+  }
+  function longestOverlapSuffixPrefix(a,b){
+    const max = Math.min(a.length, b.length, 24);
+    for(let k=max;k>3;k--){ if(a.slice(-k).toLowerCase() === b.slice(0,k).toLowerCase()) return k; }
+    return 0;
+  }
+  function shouldFinalize(text){
+    if(/[。！？!?…．.]\s*$/.test(text)) return true;   // 句末标点
+    if(text.length > 100 && /\s$/.test(text)) return true; // 很长后允许落地
+    return false;
+  }
+  function finalizeLive(){
+    if(!liveText) return;
+    finalLines.push(liveText); liveText = "";
+    updatePreview();
+  }
+
+  // 能量检测 + 智能 commit（迟滞 + 软/硬暂停 + 最长片段）
+  function loopEnergy(cfg){
+    const { mode, thrHigh, thrLow, softPause, hardPause, maxRun } = cfg;
+    const buf = new Float32Array(1024);
+    let ema = 0, alpha = 0.3;
+
+    const tick = () => {
+      if(!analyser) return;
+      analyser.getFloatTimeDomainData(buf);
+      let sum=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; sum+=v*v; }
+      const rms = Math.sqrt(sum/buf.length);
+      ema = alpha*rms + (1-alpha)*ema;
+
+      const now = performance.now();
+      if(!speaking && ema > thrHigh){ speaking = true; lastVoiceOnTs = now; }
+      if(speaking && ema < thrLow){ speaking = false; lastVoiceOffTs = now; }
+
+      if(mode === "smart" && !paused){
+        // 短静音 -> commit 推进
+        if(!speaking && (now - lastVoiceOffTs) > softPause && (now - lastCommit) > 250){
+          safeCommit(); lastCommit = now;
+        }
+        // 长句保护 -> 中途也切一次
+        if(speaking && (now - lastVoiceOnTs) > maxRun && (now - lastCommit) > 300){
+          safeCommit(); lastCommit = now;
+        }
+        // 长静音 -> 落地
+        if(!speaking && (now - lastVoiceOffTs) > hardPause && liveText){
+          finalizeLive();
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  function safeCommit(){ try{ dc && dc.send(JSON.stringify({ type:"input_audio_buffer.commit" })); }catch{} }
+
+  // 控制与工具
+  function togglePause(){
+    if(!micTrack) return;
+    if(!paused){
+      micTrack.enabled=false; paused=true; safeCommit();
+      setStatus("已暂停 · 不再采集音频"); $("btnToggle").textContent="继续"; log("⏸️ 已暂停麦克风");
+    }else{
+      micTrack.enabled=true; paused=false;
+      setStatus("已连接 · 正在转写…"); $("btnToggle").textContent="暂停"; log("▶️ 继续采集麦克风");
+    }
+  }
+  function copyPreview(){
+    const text = $("preview").value || "";
+    navigator.clipboard.writeText(text)
+      .then(()=>log("📋 已复制：预览文本","ok"))
+      .catch(e=>log("复制失败: "+e.message,"warn"));
+  }
+  function stopAll(){ setStatus("已停止"); log("⏹️ 停止"); disableAll(false); cleanup(); }
+  function disableAll(working){
+    $("btnStart").disabled = working; $("btnToggle").disabled = true;
+    $("btnStop").disabled = !working; $("btnCopyPreview").disabled = true;
+  }
+  function cleanup(){
+    if(fixedTimer){ clearInterval(fixedTimer); fixedTimer=null; }
+    if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
+    try{ dc && dc.close(); }catch{} try{ pc && pc.close(); }catch{}
+    try{ micTrack && micTrack.stop(); }catch{}
+    try{ micStream && micStream.getTracks().forEach(t=>t.stop()); }catch{}
+    if(ac){ try{ ac.close(); }catch{} ac=null; }
+    pc=null; dc=null; micTrack=null; micStream=null; analyser=null; ephemeralKey=null; paused=false;
+    speaking=false; liveText=""; finalLines.length=0; updatePreview();
+  }
+
+  // 工具函数
+  const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+})();
+</script>
+</body>
+</html>
