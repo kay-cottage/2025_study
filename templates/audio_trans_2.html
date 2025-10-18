@@ -3,32 +3,30 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>实时语音转写 + 实时翻译 · 稳定分句（提交/落地解耦版）</title>
+<title>实时语音转写 · 稳定分句（commit≠finalize，防碎句/防0ms）</title>
 <style>
   :root{--bg:#0b1020;--panel:#111936;--text:#e7ecff;--muted:#93a4c3;--line:#1f2a4d;
-    --brand:#7c9dfc;--ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--shadow:0 20px 50px rgba(3,8,23,.4)}
+    --shadow:0 20px 50px rgba(3,8,23,.4)}
   *{box-sizing:border-box}
   body{margin:0;background:linear-gradient(180deg,#0b1020,#0f1530 60%,#0b1020);color:var(--text);
        font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
   .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
   .card{background:linear-gradient(180deg,#0f1633,#0e1630);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
   .header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:space-between}
-  .title{font-size:18px;font-weight:700;letter-spacing:.2px}
-  .pill{border:1px solid var(--line);color:var(--muted);padding:4px 8px;border-radius:999px;font-size:12px}
+  .title{font-size:18px;font-weight:700}
+  .pill{border:1px solid var(--line);color:#93a4c3;padding:4px 8px;border-radius:999px;font-size:12px}
   .body{padding:16px 20px}
   .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0}
   .row > *{flex:1}
-  label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+  label{font-size:12px;color:#93a4c3;display:block;margin-bottom:6px}
   input,select,button,textarea{background:#0b122b;border:1px solid var(--line);color:var(--text);
     border-radius:10px;padding:10px 12px;outline:none}
-  input::placeholder{color:#6b7280}
-  select{cursor:pointer}
-  button{cursor:pointer;transition:.15s ease;border:1px solid #2a3870}
+  select,button{cursor:pointer}
   button.primary{background:linear-gradient(180deg,#4f6df7,#4a61e6);border:none}
   button.ghost{background:#0b122b}
   button:disabled{opacity:.6;cursor:not-allowed}
   .btns{display:flex;gap:10px;flex-wrap:wrap}
-  .status{font-size:13px;color:var(--muted)}
+  .status{font-size:13px;color:#93a4c3}
   .log{background:#0b122b;border:1px dashed #213069;border-radius:12px;padding:12px;height:160px;overflow:auto}
   .preview-wrap{position:relative;margin-top:6px}
   #preview{width:100%;height:560px;resize:vertical}
@@ -42,22 +40,21 @@
   details.settings[open] .chev{transform:rotate(45deg)}
   .controls{padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
   @media (max-width:1000px){.controls{grid-template-columns:1fr}}
-  .small{font-size:12px} .muted{color:var(--muted)}
+  .small{font-size:12px;color:#93a4c3}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
     <div class="header">
-      <div class="title">实时语音转写 <span class="pill">智能分句 · 实时翻译 · 稳定分句</span></div>
+      <div class="title">实时语音转写 <span class="pill">稳定分句 · iOS 优化</span></div>
       <div class="status" id="status">未连接</div>
     </div>
 
     <div class="body">
-      <!-- 顶部核心输入 -->
       <div class="row">
         <div>
-          <label>OpenAI API Key（本地调试用；线上改为后端签发临时密钥）</label>
+          <label>OpenAI API Key</label>
           <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
         </div>
         <div>
@@ -76,9 +73,8 @@
         </div>
       </div>
 
-      <!-- 可折叠参数（默认收起） -->
       <details class="settings">
-        <summary><span class="chev"></span><b>参数设置（可收起/展开）</b><span class="muted small"> · 断句/延迟/翻译</span></summary>
+        <summary><span class="chev"></span><b>参数设置（可收起/展开）</b><span class="small"> · 断句/延迟/翻译</span></summary>
         <div class="controls">
           <div>
             <label>分句模式</label>
@@ -109,13 +105,13 @@
           <div>
             <label>软暂停/硬暂停 ms</label>
             <div style="display:flex;gap:8px">
-              <input id="softPause" type="number" min="300" max="900" value="440" />
-              <input id="hardPause" type="number" min="900" max="2200" value="1300" />
+              <input id="softPause" type="number" min="300" max="900" value="460" />
+              <input id="hardPause" type="number" min="900" max="2200" value="1450" />
             </div>
           </div>
           <div>
             <label>最长连续片段 ms</label>
-            <input id="maxRun" type="number" min="2000" max="8000" value="5200" />
+            <input id="maxRun" type="number" min="2000" max="8000" value="5400" />
           </div>
           <div>
             <label>TTS 输出（可选）</label>
@@ -127,7 +123,6 @@
             </select>
           </div>
 
-          <!-- —— 翻译相关 —— -->
           <div>
             <label>实时翻译</label>
             <select id="translateOn">
@@ -139,12 +134,9 @@
             <label>目标语言</label>
             <select id="translateTarget">
               <option value="auto" selected>自动对向</option>
-              <option value="zh">中文</option>
-              <option value="de">Deutsch</option>
-              <option value="en">English</option>
-              <option value="ja">日本語</option>
-              <option value="fr">Français</option>
-              <option value="es">Español</option>
+              <option value="zh">中文</option><option value="de">Deutsch</option>
+              <option value="en">English</option><option value="ja">日本語</option>
+              <option value="fr">Français</option><option value="es">Español</option>
             </select>
           </div>
           <div>
@@ -157,7 +149,6 @@
         </div>
       </details>
 
-      <!-- 控制按钮 -->
       <div class="row btns">
         <button class="primary" id="btnStart">开始</button>
         <button class="ghost" id="btnToggle" disabled>暂停</button>
@@ -165,14 +156,13 @@
         <button class="ghost" id="btnCopyPreview" disabled>复制预览文本</button>
       </div>
 
-      <!-- 实时文本预览 -->
-      <label>实时文本预览（原文 + 译文，单窗口展示；译文自动插在原文下一行）</label>
+      <label>实时文本预览（原文 + 译文，单窗口展示）</label>
       <div class="preview-wrap">
         <button class="copy-fab" id="btnCopyFab">复制</button>
         <textarea id="preview" class="mono" placeholder="开始后，这里将滚动显示你的长句实时转写与翻译…"></textarea>
       </div>
 
-      <p class="muted small" id="presetNote"></p>
+      <p class="small" id="presetNote"></p>
 
       <label>系统日志</label>
       <div class="log mono small" id="log"></div>
@@ -187,35 +177,37 @@
     $("log").appendChild(p); $("log").scrollTop=$("log").scrollHeight; };
   const setStatus = (txt) => $("status").textContent = txt;
 
-  // —— 客户端检测（iPad 报 Mac 也识别为 iOS）——
+  // —— 客户端检测（iPad 报 Mac 也识别）——
   const ua = navigator.userAgent || "";
   const isIOS = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-  // —— 两套稳态预设：提交/落地解耦 + 最小落地字数 + 宽限 —— //
+  // —— 稳态预设（iOS 更严）——
   const PRESETS = {
     desktop: {
       mode: "smart",
       commitMs: 600,
       thrHigh: 0.019, thrLow: 0.013,
-      softPause: 440, hardPause: 1300, maxRun: 5200,
-      minCommitChars: 12,             // 提交前最低 live 字数
-      minFinalChars: 20,              // ★ 最小落地字数
-      finalizeGraceMs: 400,           // ★ 硬暂停后再等这么久才允许落地
-      commitCooldownMs: 300,
-      minBufferedBeforeCommitMs: 150, // >=100ms 的安全余量
-      rt_vad: { threshold: 0.50, prefix_padding_ms: 300, silence_duration_ms: 750 }
+      softPause: 460, hardPause: 1450, maxRun: 5400,
+      minCommitChars: 10,              // 触发commit前最少新增文字
+      minCharsPerCommit: 4,            // 单次commit至少多少新字（没有新字就不commit）
+      minFinalChars: 22,               // ★ 没到这个字数，哪怕有句号也不落地
+      finalizeGraceMs: 420,            // ★ 超过硬暂停再等这么久才强制落地
+      commitCooldownMs: 320,
+      minBufferedBeforeCommitMs: 160,  // ≥100ms 安全线
+      rt_vad: { threshold: 0.50, prefix_padding_ms: 300, silence_duration_ms: 800 }
     },
     ios: {
       mode: "smart",
       commitMs: 720,
       thrHigh: 0.022, thrLow: 0.015,
-      softPause: 520, hardPause: 1550, maxRun: 5600,
-      minCommitChars: 18,
-      minFinalChars: 28,              // ★ iOS 更高，掐掉“一词一行”
-      finalizeGraceMs: 450,
+      softPause: 520, hardPause: 1600, maxRun: 5600,
+      minCommitChars: 14,
+      minCharsPerCommit: 6,
+      minFinalChars: 28,               // iOS 更高门槛，掐碎句
+      finalizeGraceMs: 480,
       commitCooldownMs: 380,
-      minBufferedBeforeCommitMs: 170,
-      rt_vad: { threshold: 0.54, prefix_padding_ms: 340, silence_duration_ms: 900 }
+      minBufferedBeforeCommitMs: 180,
+      rt_vad: { threshold: 0.54, prefix_padding_ms: 340, silence_duration_ms: 950 }
     }
   };
   const preset = isIOS ? PRESETS.ios : PRESETS.desktop;
@@ -229,17 +221,14 @@
     $("softPause").value = preset.softPause;
     $("hardPause").value = preset.hardPause;
     $("maxRun").value = preset.maxRun;
-
     const pill = document.createElement("span");
     pill.className = "pill";
     pill.textContent = isIOS ? "iOS 稳定预设" : "桌面稳定预设";
     document.querySelector(".title").appendChild(document.createTextNode(" "));
     document.querySelector(".title").appendChild(pill);
-
-    const note = isIOS
-      ? "iOS：最小落地 28 字 + 450ms 宽限；只提交不落地直到达标或超时。"
-      : "桌面：最小落地 20 字 + 400ms 宽限；提交和落地分离，稳而不散。";
-    $("presetNote").textContent = note;
+    $("presetNote").textContent = isIOS
+      ? "iOS：最小落地 28 字 + 480ms 宽限；只有有新文字才会 commit，杜绝 0.00ms。"
+      : "桌面：最小落地 22 字 + 420ms 宽限；防碎句、防 0.00ms。";
   });
 
   // —— WebRTC / Realtime —— //
@@ -249,24 +238,29 @@
   // 语音状态
   let speaking=false, lastVoiceOnTs=0, lastVoiceOffTs=0;
 
-  // 提交调度
+  // 提交调度/估计
   let firstAudioTs=0, lastCommitTs=0, pendingCommitTimer=null, commitRequested=false, startedStreaming=false;
-
-  // 噪声阈值
-  let noiseFloor=0, dynHigh=0, dynLow=0;
 
   // 文本与翻译
   const finalPairs=[]; let liveSrc=""; let liveTgt=""; let liveTransDebounce=null, liveTransReqId=0;
 
-  // 运行时配置
+  // —— “只有有新文字才允许 commit” —— //
+  let lastCommitTextLen = 0;        // 上次 commit 时 liveSrc 的长度
+  let charsSinceLastCommit = 0;     // 自上次 commit 后的新增文字数
+
+  // 噪声阈值
+  let noiseFloor=0, dynHigh=0, dynLow=0;
+
+  // 运行配置
   let cfg = {
     rtModel:"", sttModel:"", mode:"smart", langHint:"",
     ttsVoice:"", commitMs:preset.commitMs, thrHigh:preset.thrHigh, thrLow:preset.thrLow,
     softPause:preset.softPause, hardPause:preset.hardPause, maxRun:preset.maxRun,
     translateOn:true, translateTarget:"auto", nearRealtime:true, apiKey:"",
     minCommitChars: preset.minCommitChars,
-    minFinalChars: preset.minFinalChars,           // ★ 新
-    finalizeGraceMs: preset.finalizeGraceMs,       // ★ 新
+    minCharsPerCommit: preset.minCharsPerCommit,
+    minFinalChars: preset.minFinalChars,
+    finalizeGraceMs: preset.finalizeGraceMs,
     commitCooldownMs: preset.commitCooldownMs,
     minBufferedBeforeCommitMs: preset.minBufferedBeforeCommitMs,
     rtVadPreset: { ...preset.rt_vad }
@@ -372,11 +366,11 @@
       // 噪声底噪校准
       setStatus("校准中…"); log("🧪 噪声底噪自校准（~0.7s）");
       await calibrateNoiseFloor(720);
-      log(`📏 底噪=${noiseFloor.toFixed(5)} 动态阈 high=${dynHigh.toFixed(5)} low=${dynLow.toFixed(5)}`);
+      log(`📏 底噪=${noiseFloor.toFixed(5)} 动态阈 high=${(dynHigh||cfg.thrHigh).toFixed(5)} low=${(dynLow||cfg.thrLow).toFixed(5)}`);
 
       firstAudioTs = performance.now(); startedStreaming = true;
+      lastCommitTextLen = 0; charsSinceLastCommit = 0;
 
-      // 循环
       loopEnergy(cfg);
       if(cfg.mode === "fast"){ fixedTimer=setInterval(()=>{ if(!paused) requestCommit("timer"); }, cfg.commitMs); }
 
@@ -390,7 +384,7 @@
     }
   }
 
-  // —— 发送/更新 Realtime 会话参数（服务端 VAD）——
+  // —— session.update —— //
   function sendSessionUpdate(){
     if(!dc) return;
     const rtTurn = (cfg.mode === "smart")
@@ -411,14 +405,17 @@
     log(`🔧 session.update: silence=${cfg.rtVadPreset.silence_duration_ms}ms, thr=${cfg.rtVadPreset.threshold}`);
   }
 
-  // —— 统一事件 —— //
+  // —— 事件 —— //
   function handleRealtimeEvent(ev){
     const t = ev.type; if(!t) return;
     if(t === "conversation.item.input_audio_transcription.completed"){
       const text=(ev.transcript||"").trim(); if(!text) return;
+      const before = liveSrc.length;
       liveSrc = mergeText(liveSrc, text);
+      const delta = Math.max(liveSrc.length - before, 0);
+      if(delta>0){ charsSinceLastCommit += delta; }
 
-      // 近实时翻译（轻防抖）
+      // 近实时翻译
       if (cfg.translateOn && cfg.nearRealtime) {
         if (liveTransDebounce) clearTimeout(liveTransDebounce);
         const wait = isIOS ? 600 : 450;
@@ -427,12 +424,12 @@
         }, wait);
       }
 
-      if (shouldFinalize(liveSrc)) finalizeLive();  // 满足规则才落地
+      if (shouldFinalize(liveSrc)) finalizeLive();
       updatePreview();
     } else if (t === "error"){
       const msg = (ev.error?.message || "").toLowerCase();
       if (msg.includes("buffer too smal") || msg.includes("buffer too small")) {
-        cfg.minBufferedBeforeCommitMs = Math.min(cfg.minBufferedBeforeCommitMs + 20, 240);
+        cfg.minBufferedBeforeCommitMs = Math.min(cfg.minBufferedBeforeCommitMs + 20, 260);
         log(`🛡️ auto-guard: minBufferedBeforeCommitMs → ${cfg.minBufferedBeforeCommitMs}`, "warn");
       }
       log("⚠️ Realtime 错误: " + (ev.error?.message || JSON.stringify(ev)), "warn");
@@ -456,26 +453,26 @@
     return 0;
   }
 
-  // ★★★ 严格的落地规则（提交与落地解耦） ★★★
+  // ★ 只有长度达标才允许落地；标点不再特权触发
   function shouldFinalize(text){
     if (!text) return false;
-    // 句末标点 → 允许落地
-    if (/[。！？!?…．.]\s*$/.test(text)) return true;
-    // 上限保护：达到一定长度并且当前在词边界/空白后（防止半词截断）
-    const lenCut = isIOS ? 120 : 110;
-    if (text.length >= Math.max(cfg.minFinalChars, lenCut) && /\s$/.test(text)) return true;
+    const punctuationEnd = /[。！？!?…．.]\s*$/.test(text);
+    const lenOK = text.length >= cfg.minFinalChars;
+    if (punctuationEnd && lenOK) return true;
+    // 过长保护：到上限也可落地（避免单段太长）
+    const lenCut = isIOS ? 130 : 120;
+    if (text.length >= lenCut && /\s$/.test(text)) return true;
     return false;
   }
 
   function finalizeLive(force=false){
     if(!liveSrc) return;
-    if(!force && liveSrc.length < cfg.minFinalChars) {
-      // 不满足最小落地字数时，拒绝落地（继续合并后续文本）
-      return;
-    }
+    if(!force && liveSrc.length < cfg.minFinalChars) return;
     const idx = finalPairs.length;
     finalPairs.push({ src: liveSrc, tgt: cfg.translateOn ? null : "" });
     liveSrc = ""; liveTgt = "";
+    // 重置“自上次 commit 新字数”的基线
+    lastCommitTextLen = 0; charsSinceLastCommit = 0;
     updatePreview();
     if (cfg.translateOn) translateSegment(idx).catch(()=>{});
   }
@@ -499,7 +496,7 @@
     dynLow =Math.max(cfg.thrLow,  noiseFloor*mulLow);
   }
 
-  // —— 能量循环 & 智能提交（硬暂停只提交，不立刻落地）—— //
+  // —— 能量循环（硬暂停只提交；达标或超时才落地）—— //
   function loopEnergy(cfgLocal){
     const { mode }=cfgLocal;
     const buf=new Float32Array(1024);
@@ -519,24 +516,24 @@
       if(speaking && ema<low){ speaking=false; lastVoiceOffTs=now; }
 
       if(mode==="smart" && !paused){
-        // 静音达到软暂停：尝试提交（但不落地）
+        // 软暂停：只提交（不落地）
         if(!speaking && (now-lastVoiceOffTs)>cfg.softPause){
           const enoughText = (liveSrc && liveSrc.length>=cfg.minCommitChars);
           const longQuiet  = (now-lastVoiceOffTs)>(cfg.hardPause*0.8);
           if(enoughText || longQuiet){ requestCommit("softPause"); }
         }
-        // 说太久：切一刀（只提交，仍不落地）
+        // 说太久：切一刀（也只提交）
         if(speaking && (now-lastVoiceOnTs)>cfg.maxRun){ requestCommit("maxRun"); }
 
-        // 硬暂停：仅提交 → 达标或超时才落地
+        // 硬暂停：先提交；字数达标则落地；否则宽限后强制落地
         if(!speaking && (now-lastVoiceOffTs)>cfg.hardPause){
-          requestCommit("hardPause"); // 先确保音频被提交
-          const quietFor = (now - lastVoiceOffTs);
+          requestCommit("hardPause");
+          const quietFor = (now-lastVoiceOffTs);
           if(liveSrc){
             if(liveSrc.length >= cfg.minFinalChars){
-              finalizeLive();                   // 达标→落地
+              finalizeLive();
             }else if(quietFor > (cfg.hardPause + cfg.finalizeGraceMs)){
-              finalizeLive(true);               // 超时→强制落地
+              finalizeLive(true);
             }
           }
         }
@@ -546,16 +543,24 @@
     tick();
   }
 
-  // —— 提交调度器（≥100ms 缓冲 + 冷却 + 合并）—— //
+  // —— 只在“有新文字时”才允许 commit（防 0.00ms）—— //
   function requestCommit(reason=""){
     const now=performance.now();
     if(!startedStreaming){ scheduleCommit(cfg.minBufferedBeforeCommitMs, reason+"(notStarted)"); return; }
-    const sinceFirst = now - (firstAudioTs||now);
+
+    // 没有新文字 → 跳过（避免 0.00ms）
+    if(charsSinceLastCommit < cfg.minCharsPerCommit){
+      // 但若是过长或硬暂停的“强原因”，允许排一个延迟看看是否会有新字流入
+      if(reason==="maxRun" || reason==="hardPause"){
+        scheduleCommit(120, reason+"(waitNewText)");
+      }
+      return;
+    }
+
     const sinceLast  = now - (lastCommitTs||0);
-    const need1 = cfg.minBufferedBeforeCommitMs - sinceFirst;
-    const need2 = cfg.minBufferedBeforeCommitMs - sinceLast;
-    const need3 = cfg.commitCooldownMs - sinceLast;
-    const wait = Math.max(need1, need2, need3, 0);
+    const needBuf = Math.max(cfg.minBufferedBeforeCommitMs - sinceLast, 0);
+    const needCd  = Math.max(cfg.commitCooldownMs - sinceLast, 0);
+    const wait = Math.max(needBuf, needCd, 0);
     if(wait>0){ scheduleCommit(wait, reason); } else { doCommit(reason); }
   }
   function scheduleCommit(waitMs, reason=""){
@@ -566,8 +571,15 @@
   function doCommit(reason=""){
     try{
       if(!dc) return;
+      // 二次防线：到真正发送前再检查一次是否有新文字
+      const added = Math.max(liveSrc.length - lastCommitTextLen, 0);
+      if(added < cfg.minCharsPerCommit){
+        commitRequested=false; return; // 仍然没有新字 → 放弃这次 commit
+      }
       dc.send(JSON.stringify({ type:"input_audio_buffer.commit" }));
       lastCommitTs = performance.now();
+      lastCommitTextLen = liveSrc.length;
+      charsSinceLastCommit = 0;
       commitRequested=false;
       // log(`· commit ${reason}`, "muted");
     }catch(e){ commitRequested=false; }
@@ -652,10 +664,11 @@
     pc=dc=micTrack=micStream=analyser=null; ephemeralKey=null; paused=false;
     speaking=false; noiseFloor=0; dynHigh=0; dynLow=0;
     firstAudioTs=0; lastCommitTs=0; startedStreaming=false; commitRequested=false;
-    finalPairs.length=0; liveSrc=""; liveTgt=""; updatePreview();
+    finalPairs.length=0; liveSrc=""; liveTgt=""; lastCommitTextLen=0; charsSinceLastCommit=0;
+    updatePreview();
   }
 
-  // —— 小工具 —— //
+  // —— 工具 —— //
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 
 })();
