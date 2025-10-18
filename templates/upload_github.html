@@ -39,9 +39,8 @@
   .toolbar{display:flex;gap:8px;align-items:center;margin:8px 0 12px 0;flex-wrap:wrap}
   #html-output{flex:1;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;overflow:auto}
 
-  /* iOS: 允许选中文本与系统选择菜单（注意 default 才是合法值） */
+  /* iOS 允许文本选择 + 系统菜单（注意 default 才合法） */
   #html-output, #html-output * { -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
-  /* 避免 iOS 把滚动/捏合手势“吃掉”选择 */
   #html-output { touch-action: manipulation; }
 
   @media (pointer:coarse){ .word{ touch-action:manipulation; } }
@@ -61,11 +60,11 @@
   .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998}
   .modal{
     position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-    width:min(650px,92vw);background:#fff;padding:16px;border-radius:14px;
+    width:min(720px,92vw);background:#fff;padding:16px;border-radius:14px;
     box-shadow:0 20px 60px rgba(0,0,0,.35);z-index:9999
   }
   .grid{display:grid;grid-template-columns:160px 1fr;gap:10px 12px;align-items:center}
-  .grid input[type="text"], .grid input[type="password"]{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}
+  .grid input[type="text"], .grid input[type="password"], .grid select{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}
   .grid .row-span{grid-column:1 / -1}
   .grid .switches{display:flex;flex-wrap:wrap;gap:10px}
   .switch{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:#f9fafb}
@@ -126,7 +125,7 @@
       </button>
       <button id="toggle-btn" class="btn btn-ghost" type="button">收起输入区</button>
       <button id="download-btn" class="btn btn-ghost" type="button">下载 HTML</button>
-      <button id="open-settings-top" class="btn btn-ghost" type="button">设置（GitHub）</button>
+      <button id="open-settings-top" class="btn btn-ghost" type="button">设置（GitHub/TTS）</button>
 
       <button id="save-selection-btn" class="btn btn-primary" type="button" disabled title="先在右侧选中文字">
         <svg viewBox="0 0 24 24" fill="none"><path d="M4 7a2 2 0 0 1 2-2h8l4 4v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h6v5H8z" stroke="currentColor" stroke-width="1.6"/></svg>
@@ -148,11 +147,13 @@
   <button id="open-settings-btn" class="btn btn-ghost" type="button">设置</button>
 </div>
 
-<!-- 设置模态框 -->
+<!-- 设置模态框（新增 TTS 区域） -->
 <div id="modal-backdrop" class="modal-backdrop hidden"></div>
 <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-  <h3 id="settings-title" style="margin:0 0 10px">GitHub 设置</h3>
+  <h3 id="settings-title" style="margin:0 0 10px">设置</h3>
   <div class="grid">
+    <div class="row-span" style="margin:6px 0 0;font-weight:600">GitHub</div>
+
     <label for="gh-token">Token*</label>
     <input id="gh-token" type="password" placeholder="Fine-grained token（仅该仓库 contents:write）" />
     <label for="gh-owner">Owner*</label>
@@ -171,7 +172,20 @@
         <label class="switch"><input id="gh-split-hour" type="checkbox"> 追加模式下按小时切分文件名（YYYY-MM-DD-HH.md）</label>
       </div>
     </div>
-    <div class="subtle row-span">参数存于 localStorage（仅本浏览器）。</div>
+
+    <div class="row-span" style="margin:14px 0 0;font-weight:600">TTS 语音</div>
+    <label for="tts-mode">模式</label>
+    <select id="tts-mode">
+      <option value="auto">双轨：远程失败自动回退本地（默认）</option>
+      <option value="browser">浏览器优先（最稳）</option>
+      <option value="remote">仅远程（FRDic）</option>
+    </select>
+    <label for="tts-voice">本地语音</label>
+    <select id="tts-voice"></select>
+    <label for="tts-rate">语速</label>
+    <input id="tts-rate" type="text" placeholder="1.1（句子）/ 1.3（单词）" />
+
+    <div class="subtle row-span">参数存于 localStorage（仅本浏览器）。首次点击会做一次静音解锁，确保 iOS 能播放音频。</div>
   </div>
   <div class="actions">
     <button class="btn btn-ghost" id="cancel-settings" type="button">取消</button>
@@ -210,7 +224,11 @@ const elSplitHour  = document.getElementById('gh-split-hour');
 const cfgState = document.getElementById('cfg-state');
 const cfgOk    = document.getElementById('cfg-ok');
 
-/** 其它引用（上传/导入，不要重复声明） */
+const elTtsMode  = document.getElementById('tts-mode');
+const elTtsVoice = document.getElementById('tts-voice');
+const elTtsRate  = document.getElementById('tts-rate');
+
+/** 其它引用（上传/导入） */
 const uploadBtn   = document.getElementById('upload-btn');
 const fileInput   = document.getElementById('file-input');
 const fileNameSpan= document.getElementById('file-name');
@@ -221,7 +239,7 @@ const dropzone    = document.getElementById('dropzone');
 /** 导入来源（用于 Source 字段） */
 let sourceOverride = null;
 
-/** 选区“快照”——解决 iPad 按钮清空选区的问题 */
+/** 选区快照（iPad：按钮点击不丢选区） */
 let latestSelection = { text:'', range:null };
 const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
 
@@ -231,7 +249,6 @@ convertBtn.addEventListener('click', () => {
   const rawHtml = marked.parse(md);
   htmlOutput.innerHTML = rawHtml;
   wrapWords(htmlOutput);
-  // 渲染后清空旧快照
   latestSelection = { text:'', range:null };
   handleSelectionChange();
 });
@@ -250,42 +267,7 @@ downloadBtn.addEventListener('click', () => {
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/** ================== 单例播放器 + 轻节流 + 回退 ================== */
-// 替换原 playWord / playSentence，统一用单例音频，必要时回退到 speechSynthesis
-const tts = { audio: new Audio(), lastTs: 0, minGap: 220 }; // ms
-tts.audio.preload = 'none';
-
-function speakUrl(url, plainTextForFallback='', rate=1.25){
-  const now = Date.now();
-  if (now - tts.lastTs < tts.minGap) return;
-  tts.lastTs = now;
-
-  try { tts.audio.pause(); } catch {}
-  tts.audio.playbackRate = rate;
-  tts.audio.src = url + (url.includes('?') ? '&' : '?') + '_=' + now; // 防缓存
-  tts.audio.currentTime = 0;
-  tts.audio.play().catch(() => {
-    if ('speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch {}
-      const u = new SpeechSynthesisUtterance(plainTextForFallback);
-      u.lang = 'de-DE'; u.rate = 1.1;
-      window.speechSynthesis.speak(u);
-    } else {
-      toast('音频被阻止或服务限速，且无可用回退');
-    }
-  });
-}
-function playWord(w){
-  const url = "https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt=" + encodeURIComponent(w);
-  speakUrl(url, w, 1.3);
-}
-function playSentence(s){
-  const url = "https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt=" + encodeURIComponent(s);
-  speakUrl(url, s, 1.1);
-}
-
-/** ================== 包裹词（无逐词监听） ================== */
-// 事件委托会在容器上处理点击，这里只负责把纯文本拆成 span.word
+/** ================== 包裹词（仅包裹，无监听；监听在容器上事件委托） ================== */
 function wrapWords(root){
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
   const nodes = [];
@@ -311,7 +293,7 @@ function wrapWords(root){
   });
 }
 
-/** ================== iPad 选区“守望者” + 快照 ================== */
+/** ================== iOS 选区守望者 ================== */
 let selWatchTimer = null;
 function startSelectionWatcher(windowMs=1500, intervalMs=120){
   stopSelectionWatcher();
@@ -358,56 +340,55 @@ function snapshotSelectionNow(){
   }
 }
 
-/** ========= 改进点：仅当“当前真的有选区”才拦截点读；否则清空陈旧快照 ========= */
+/** ======== 改进：仅当“当前确有选区文本”才拦截点读；否则清空旧快照 ======== */
 function hasActiveSelectionInsideOutput(){
   const sel = window.getSelection?.();
-  return !!(sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput(sel));
+  const t = (sel && sel.toString && sel.toString().trim()) || '';
+  return !!(t.length>0 && sel.rangeCount>0 && selectionInsideOutput(sel));
 }
-
-// 替换 selectionchange：无有效选区则清空快照，恢复点读
 document.addEventListener('selectionchange', () => {
-  const sel = window.getSelection?.();
-  if (sel && sel.rangeCount>0 && !sel.isCollapsed && selectionInsideOutput(sel)) {
+  if (hasActiveSelectionInsideOutput()) {
     startSelectionWatcher(1200, 120);
-  } else {
-    if (latestSelection.text) {
-      latestSelection = { text:'', range:null };
-      updateSaveButtons();
-    }
+  } else if (latestSelection.text) {
+    latestSelection = { text:'', range:null };
+    updateSaveButtons();
   }
 });
-
-// 触发守望者（保持你原逻辑）
 htmlOutput.addEventListener('contextmenu', ()=>{ startSelectionWatcher(1200, 120); }, true);
 ['touchstart','touchmove','touchend'].forEach(ev=>{
   htmlOutput.addEventListener(ev, ()=>{ startSelectionWatcher(1500, 120); }, {passive:true});
 });
-
-// 点击空白区域也清理快照（手感更一致）
 htmlOutput.addEventListener('pointerdown', () => {
-  const sel = window.getSelection?.();
-  if (!sel || sel.isCollapsed) {
-    if (latestSelection.text) {
-      latestSelection = { text:'', range:null };
-      updateSaveButtons();
-    }
+  if (!hasActiveSelectionInsideOutput() && latestSelection.text){
+    latestSelection = { text:'', range:null };
+    updateSaveButtons();
   }
-}, {passive:true});
+},{passive:true});
 
-/** ================== 事件委托：容器处理点击/双击点读 ================== */
-htmlOutput.addEventListener('pointerup', (e) => {
-  const span = e.target.closest?.('span.word');
-  if (!span) return;
-  if (hasActiveSelectionInsideOutput()) return; // 有真实选区 → 不打扰保存流程
-  const w = span.getAttribute('data-word');
-  if (w) playWord(w);
-});
-htmlOutput.addEventListener('dblclick', (e) => {
+/** ================== 事件委托：点击=读词；长按=读句 ================== */
+let longPressTimer=null, pressTarget=null;
+htmlOutput.addEventListener('click', (e) => {
   const span = e.target.closest?.('span.word');
   if (!span) return;
   if (hasActiveSelectionInsideOutput()) return;
-  const s = span.getAttribute('data-sentence') || span.textContent || '';
-  if (s.trim()) playSentence(s.trim());
+  const w = span.getAttribute('data-word');
+  if (w) speakWord(w);
+});
+htmlOutput.addEventListener('pointerdown', (e)=>{
+  const span = e.target.closest?.('span.word');
+  if (!span) return;
+  if (hasActiveSelectionInsideOutput()) return;
+  pressTarget = span;
+  longPressTimer = setTimeout(()=>{
+    const s = span.getAttribute('data-sentence') || span.textContent || '';
+    if (s.trim()) speakSentence(s.trim());
+    longPressTimer = null; pressTarget = null;
+  }, 380); // 触屏长按阈值
+},{passive:true});
+['pointerup','pointercancel','pointerleave'].forEach(ev=>{
+  htmlOutput.addEventListener(ev, ()=>{
+    if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer=null; pressTarget=null; }
+  }, {passive:true});
 });
 
 /** ================== 悬浮条 UI & 按钮状态 ================== */
@@ -432,27 +413,22 @@ function updateSaveButtons(){
 document.addEventListener('scroll', ()=>hide(toolbar), true);
 window.addEventListener('resize', ()=>hide(toolbar));
 
-/** ================== 保存按钮绑定（iPad 关键：用 touchstart，更早于清空选区） ================== */
+/** ================== 保存按钮绑定（iPad 关键：touchstart） ================== */
 function bindSaveButton(btn){
-  // 触控：在 touchstart 立即保存并阻止后续 click
   btn.addEventListener('touchstart', (e)=>{
-    e.preventDefault(); // 阻止 iOS 把触摸当作新的点按从而丢失选区
+    e.preventDefault();
     doSaveCurrentSelection();
   }, {passive:false});
-
-  // 桌面：click
   btn.addEventListener('click', (e)=>{
-    if (isTouch) return; // 触控已处理
+    if (isTouch) return;
     doSaveCurrentSelection();
   });
-
-  // 桌面防止 mousedown 抢焦点导致选区丢失
   btn.addEventListener('mousedown', (e)=>{ e.preventDefault(); }, {passive:false});
 }
 bindSaveButton(saveSelectionBtn);
 bindSaveButton(saveSnippetBtn);
 
-/** ================== 保存主流程（带兜底读取系统选区） ================== */
+/** ================== 保存主流程 ================== */
 const MIN_INTERVAL_MS = 400;
 let _savingFlag = false;
 let _lastSaveTs = 0;
@@ -463,16 +439,9 @@ async function doSaveCurrentSelection(){
   const cfg = getConfig();
   if(!cfg.token || !cfg.owner || !cfg.repo || !cfg.dir){ openSettings(); return; }
 
-  // 兜底：快照为空时再尝试从系统选区直接读取一次（同步）
-  if(!latestSelection.text){
-    snapshotSelectionNow();
-  }
+  if(!latestSelection.text) snapshotSelectionNow();
   const text = latestSelection.text || '';
-
-  if(!text){
-    toast('请先在右侧预览文本中选择！');
-    return;
-  }
+  if(!text){ toast('请先在右侧预览文本中选择！'); return; }
 
   if(_savingFlag) return;
   _savingFlag = true;
@@ -517,7 +486,6 @@ async function doSaveCurrentSelection(){
 
     _lastSaveTs = Date.now();
     toast('已保存到 GitHub ✅');
-    // 不清空快照，允许连续保存同一段
   }catch(err){
     const extra = err?.detail ? `\n${String(err.detail).slice(0,180)}` : '';
     toast('保存失败：'+(err?.message||'未知错误')+extra);
@@ -682,6 +650,7 @@ btnSave.addEventListener('click', ()=>{
   closeSettings();
   toast('设置已保存');
 });
+
 function getConfig(){
   const dirRaw = (localStorage.getItem('gh_dir') || elDir.value.trim() || 'snippets/');
   return {
@@ -693,6 +662,11 @@ function getConfig(){
     file:   localStorage.getItem('gh_file')   || elFile.value.trim(),
     perSnippet: (localStorage.getItem('gh_per_snippet') ?? (elPerSnippet.checked ? '1':'')).toString() === '1',
     splitHour:  (localStorage.getItem('gh_split_hour')  ?? (elSplitHour.checked  ? '1':'')).toString() === '1',
+
+    // TTS
+    ttsMode: localStorage.getItem('tts_mode') || elTtsMode.value || 'auto',
+    ttsVoice: localStorage.getItem('tts_voice') || elTtsVoice.value || '',
+    ttsRate: parseFloat(localStorage.getItem('tts_rate') || elTtsRate.value || '0') || 0
   };
 }
 function saveSettings(){
@@ -704,6 +678,10 @@ function saveSettings(){
   localStorage.setItem('gh_file',   elFile.value.trim());
   localStorage.setItem('gh_per_snippet', elPerSnippet.checked ? '1':'0');
   localStorage.setItem('gh_split_hour',  elSplitHour.checked  ? '1':'0');
+
+  localStorage.setItem('tts_mode',  elTtsMode.value);
+  localStorage.setItem('tts_voice', elTtsVoice.value);
+  localStorage.setItem('tts_rate',  elTtsRate.value.trim());
 }
 function loadSettings(){
   elToken.value  = localStorage.getItem('gh_token')  || '';
@@ -716,6 +694,14 @@ function loadSettings(){
   const hr  = localStorage.getItem('gh_split_hour');
   elPerSnippet.checked = per === null ? true : per === '1';
   elSplitHour.checked  = hr  === null ? false: hr  === '1';
+
+  elTtsMode.value  = localStorage.getItem('tts_mode') || 'auto';
+  elTtsRate.value  = localStorage.getItem('tts_rate') || ''; // 空表示用默认 1.1/1.3
+
+  // 语音列表
+  refreshVoices();
+  const savedVoice = localStorage.getItem('tts_voice') || '';
+  if (savedVoice) elTtsVoice.value = savedVoice;
 }
 function updateCfgBadge(){
   const cfg = getConfig();
@@ -723,7 +709,6 @@ function updateCfgBadge(){
   cfgState.textContent = ok ? '已配置' : '未配置';
   cfgState.className = 'pill ' + (ok?'ok-pill':'');
 
-  // 保持原 UI 行为
   if (cfgOk?.classList?.toggle) cfgOk.classList.toggle('hidden', !ok);
 }
 function openSettings(){ show(backdrop); show(modal); }
@@ -793,6 +778,124 @@ function addRateLimitMeta(err, res){
   if(rlReset!==null) err.rateReset = rlReset;
 }
 
+/** ================== TTS：可靠播放管线 ================== */
+
+// —— 1) 用户手势静音解锁（iOS/Safari 对 <audio>.play 的策略需要一次真实手势）
+let mediaUnlocked = false;
+const silentDataUri = "data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQAA";
+function unlockMediaOnce(){
+  if (mediaUnlocked) return;
+  const a = new Audio(silentDataUri);
+  a.play().catch(()=>{}).finally(()=>{ mediaUnlocked = true; });
+}
+document.addEventListener('click', unlockMediaOnce, {once:true, capture:true});
+document.addEventListener('touchend', unlockMediaOnce, {once:true, capture:true});
+
+// —— 2) 单例播放器 + 超时兜底
+const tts = { audio: new Audio(), lastTs: 0, minGap: 160 };
+tts.audio.preload = 'none';
+
+function getRates(){
+  const cfg = getConfig();
+  const base = (cfg.ttsRate && cfg.ttsRate>0) ? cfg.ttsRate : 0;
+  return {
+    word: base || 1.3,
+    sent: base ? Math.max(0.8, base-0.2) : 1.1
+  };
+}
+
+function speakRemote(url, plain, rate, timeoutMs=1800){
+  return new Promise((resolve,reject)=>{
+    try { tts.audio.pause(); } catch {}
+    tts.audio.playbackRate = rate;
+    const cacheBust = (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+    tts.audio.src = url + cacheBust;
+    tts.audio.currentTime = 0;
+
+    let done=false;
+    const onPlay = ()=>{ if(done) return; done=true; cleanup(); resolve(); };
+    const onErr  = (e)=>{ if(done) return; done=true; cleanup(); reject(e||new Error('audio error')); };
+    const onStall= ()=>{ /* 网络抖动，等超时 */ };
+
+    tts.audio.addEventListener('playing', onPlay, {once:true});
+    tts.audio.addEventListener('play', onPlay, {once:true});
+    tts.audio.addEventListener('error', onErr, {once:true});
+    tts.audio.addEventListener('stalled', onStall);
+    tts.audio.addEventListener('suspend', onStall);
+    const to = setTimeout(()=>{ onErr(new Error('remote tts timeout')); }, timeoutMs);
+
+    function cleanup(){
+      clearTimeout(to);
+      tts.audio.removeEventListener('playing', onPlay);
+      tts.audio.removeEventListener('play', onPlay);
+      tts.audio.removeEventListener('error', onErr);
+      tts.audio.removeEventListener('stalled', onStall);
+      tts.audio.removeEventListener('suspend', onStall);
+    }
+
+    tts.audio.play().catch(onErr);
+  });
+}
+
+function speakLocal(text, rate){
+  if (!('speechSynthesis' in window)) throw new Error('no speechSynthesis');
+  try { window.speechSynthesis.cancel(); } catch {}
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'de-DE';
+  u.rate = rate;
+  const voiceName = getConfig().ttsVoice || '';
+  if (voiceName){
+    const vs = window.speechSynthesis.getVoices();
+    const v = vs.find(x => (x.name===voiceName) || (voiceName && x.name?.toLowerCase().includes(voiceName.toLowerCase())));
+    if (v) u.voice = v;
+  }
+  window.speechSynthesis.speak(u);
+}
+
+/** 统一入口：根据模式选择远程/本地/双轨 */
+function speak(text, kind){ // kind: 'word' | 'sent'
+  const now = Date.now();
+  if (now - tts.lastTs < tts.minGap) return;
+  tts.lastTs = now;
+
+  const rates = getRates();
+  const rate = (kind==='word') ? rates.word : rates.sent;
+  const mode = getConfig().ttsMode || 'auto';
+
+  const remoteUrl = "https://api.frdic.com/api/v2/speech/speakweb?langid=de&txt=" + encodeURIComponent(text);
+  if (mode === 'browser'){
+    try { speakLocal(text, rate); } catch { toast('本地 TTS 不可用'); }
+    return;
+  }
+  if (mode === 'remote'){
+    speakRemote(remoteUrl, text, rate).catch(()=>{
+      toast('远程语音被阻止/超时');
+    });
+    return;
+  }
+  // auto 双轨
+  speakRemote(remoteUrl, text, rate).catch(()=>{
+    try { speakLocal(text, rate); } catch { toast('语音失败（远程+本地）'); }
+  });
+}
+function speakWord(w){ speak(w, 'word'); }
+function speakSentence(s){ speak(s, 'sent'); }
+
+/** 语音列表加载 */
+function refreshVoices(){
+  if (!('speechSynthesis' in window)) { elTtsVoice.innerHTML = '<option value="">（当前浏览器不支持）</option>'; return; }
+  const fill = ()=>{
+    const vs = window.speechSynthesis.getVoices();
+    const opts = ['<option value="">自动</option>'].concat(
+      vs.map(v => `<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)} ${v.lang?'('+v.lang+')':''}</option>`)
+    );
+    elTtsVoice.innerHTML = opts.join('');
+  };
+  fill();
+  window.speechSynthesis.onvoiceschanged = fill;
+}
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+
 /** ================== 工具 & 初始化 ================== */
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
@@ -803,7 +906,7 @@ function escapeMd(str){ return str.replace(/[*_`~]/g, m=>'\\'+m); }
 function handleSelectionChange(){ updateSaveButtons(); }
 
 window.onload = ()=>{
-  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；右侧<b>长按选择</b>后点「保存选中」。<br>iPad 修复版：按钮不会清空选区；若仍无反应，请先单击一下右侧文本再长按选择。</p>';
+  htmlOutput.innerHTML = '<p class="subtle">左侧可 <b>上传/拖拽 .md</b> 或 <b>GitHub/Gist 链接导入</b>；右侧<b>点击</b>读词，<b>长按</b>读整句；长按选择后点「保存选中」。<br>本版已含：iOS 手势解锁、双轨 TTS 回退、底部段落同样灵敏。</p>';
   loadSettings();
   updateCfgBadge();
 };
