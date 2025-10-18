@@ -43,17 +43,22 @@
   .controls{padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
   @media (max-width:1000px){.controls{grid-template-columns:1fr}}
   .small{font-size:12px} .muted{color:var(--muted)}
+  .ios-badge{background:#f59e0b;color:#000;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;margin-left:8px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
     <div class="header">
-      <div class="title">实时语音转写 <span class="pill">智能分句 · 实时翻译</span></div>
+      <div class="title">
+        实时语音转写 <span class="pill">智能分句 · 实时翻译</span>
+        <span id="iosBadge" style="display:none" class="ios-badge">iOS优化</span>
+      </div>
       <div class="status" id="status">未连接</div>
     </div>
 
     <div class="body">
+      <!-- 顶部核心输入 -->
       <div class="row">
         <div>
           <label>OpenAI API Key（本地调试用；线上改为后端签发临时密钥）</label>
@@ -75,6 +80,7 @@
         </div>
       </div>
 
+      <!-- 可折叠参数（默认收起） -->
       <details class="settings">
         <summary><span class="chev"></span><b>参数设置（可收起/展开）</b><span class="muted small"> · 断句/延迟/翻译</span></summary>
         <div class="controls">
@@ -90,7 +96,8 @@
             <select id="langHint">
               <option value="">Auto</option><option value="zh" selected>中文</option>
               <option value="de">Deutsch</option><option value="en">English</option>
-              <option value="ja">日本語</option><option value="fr">Français</option><option value="es">Español</option>
+              <option value="ja">日本語</option><option value="fr">Français</option>
+              <option value="es">Español</option>
             </select>
           </div>
           <div>
@@ -107,13 +114,13 @@
           <div>
             <label>软暂停/硬暂停 ms</label>
             <div style="display:flex;gap:8px">
-              <input id="softPause" type="number" min="120" max="800" value="480" />
-              <input id="hardPause" type="number" min="500" max="2000" value="1200" />
+              <input id="softPause" type="number" min="120" max="1200" value="480" />
+              <input id="hardPause" type="number" min="500" max="3000" value="1200" />
             </div>
           </div>
           <div>
             <label>最长连续片段 ms</label>
-            <input id="maxRun" type="number" min="1500" max="7000" value="4800" />
+            <input id="maxRun" type="number" min="1500" max="10000" value="4800" />
           </div>
           <div>
             <label>TTS 输出（可选）</label>
@@ -124,6 +131,8 @@
               <option>marin</option><option>cedar</option>
             </select>
           </div>
+
+          <!-- —— 翻译相关 —— -->
           <div>
             <label>实时翻译</label>
             <select id="translateOn">
@@ -153,6 +162,7 @@
         </div>
       </details>
 
+      <!-- 控制按钮 -->
       <div class="row btns">
         <button class="primary" id="btnStart">开始</button>
         <button class="ghost" id="btnToggle" disabled>暂停</button>
@@ -160,13 +170,17 @@
         <button class="ghost" id="btnCopyPreview" disabled>复制预览文本</button>
       </div>
 
+      <!-- 唯一的实时文本预览框 + 复制 -->
       <label>实时文本预览（原文 + 译文，单窗口展示；译文自动插在原文下一行）</label>
       <div class="preview-wrap">
         <button class="copy-fab" id="btnCopyFab">复制</button>
         <textarea id="preview" class="mono" placeholder="开始后，这里将滚动显示你的长句实时转写与翻译…"></textarea>
       </div>
 
-      <p class="muted small">连贯建议：把 <b>软暂停</b> 450–520ms、<b>硬暂停</b> 1200–1400ms，或把 <b>高阈值</b> 提到 0.020。</p>
+      <p class="muted small">
+        <b>PC 连贯建议：</b>把 <b>软暂停</b> 450–520ms、<b>硬暂停</b> 1200–1400ms，或把 <b>高阈值</b> 提到 0.020。<br>
+        <b>iOS/iPad 用户：</b>如果词句过短，尝试将 <b>软暂停</b> 提升到 700–900ms、<b>硬暂停</b> 1800–2200ms、<b>高阈值</b> 0.025–0.030。
+      </p>
 
       <label>系统日志</label>
       <div class="log mono small" id="log"></div>
@@ -181,37 +195,59 @@
     $("log").appendChild(p); $("log").scrollTop=$("log").scrollHeight; };
   const setStatus = (txt) => $("status").textContent = txt;
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  // 检测 iOS
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  
+  if (isIOS) {
+    $("iosBadge").style.display = "inline-block";
+    log("📱 检测到 iOS/iPad 设备，已应用优化参数", "ok");
+  }
 
+  // WebRTC / Realtime
   let pc=null, dc=null, micStream=null, micTrack=null, ac=null, analyser=null, rafId=null;
   let ephemeralKey=null, paused=false, fixedTimer=null;
 
+  // 语音状态
   let speaking=false, lastVoiceOnTs=0, lastVoiceOffTs=0, lastCommit=0;
 
+  // 文本与翻译聚合
   const finalPairs = [];
   let liveSrc=""; let liveTgt="";
   let liveTransDebounce=null, liveTransReqId=0;
 
+  // 启动时读取的配置（含翻译）
   let cfg = {
     rtModel: "", sttModel: "", mode:"smart", langHint:"",
     ttsVoice:"", commitMs:650, thrHigh:0.018, thrLow:0.012, softPause:480, hardPause:1200, maxRun:4800,
     translateOn:true, translateTarget:"auto", nearRealtime:true, apiKey:""
   };
 
+  // 预览更新：把 finalPairs + live 组装成一个大文本
   const updatePreview = () => {
     const lines = [];
     for (const pair of finalPairs) {
       if (pair.src) lines.push(pair.src);
       if (cfg.translateOn) {
-        if (pair.tgt) { lines.push("-" + pair.tgt); lines.push(""); }
-        else { lines.push("(处理中…)"); lines.push(""); }
+        if (pair.tgt) {
+          lines.push("→ " + pair.tgt);
+          lines.push("");
+        } else {
+          lines.push("(处理中…)");
+          lines.push("");
+        }
       }
     }
     if (liveSrc) {
       lines.push(liveSrc);
       if (cfg.translateOn) {
-        if (liveTgt) { lines.push("【译·临时】" + liveTgt); lines.push(""); }
-        else if (cfg.nearRealtime) { lines.push("【译·临时】(…)"); lines.push(""); }
+        if (liveTgt) {
+          lines.push("【译·临时】" + liveTgt);
+          lines.push("");
+        } else if (cfg.nearRealtime) {
+          lines.push("【译·临时】(…)");
+          lines.push("");
+        }
       }
     }
     const full = lines.join("\n").trim();
@@ -221,6 +257,7 @@
     if (stayBottom) el.scrollTop = el.scrollHeight;
   };
 
+  // 绑定按钮
   $("btnStart").onclick = start;
   $("btnToggle").onclick = togglePause;
   $("btnStop").onclick = stopAll;
@@ -234,33 +271,24 @@
     cfg.mode     = $("mode").value;
     cfg.langHint = $("langHint").value;
     cfg.ttsVoice = $("ttsVoice").value;
+    
+    // iOS 自动调整默认参数
     cfg.commitMs   = clamp(parseInt($("commitMs").value||"650",10), 300, 2000);
-    cfg.thrHigh    = clamp(parseFloat($("thrHigh").value||"0.018"), 0.005, 0.08);
-    cfg.thrLow     = clamp(parseFloat($("thrLow").value ||"0.012"), 0.003, 0.08);
-    cfg.softPause  = clamp(parseInt($("softPause").value||"480",10), 120, 800);
-    cfg.hardPause  = clamp(parseInt($("hardPause").value||"1200",10), 500, 2000);
-    cfg.maxRun     = clamp(parseInt($("maxRun").value   ||"4800",10), 1500, 7000);
+    cfg.thrHigh    = clamp(parseFloat($("thrHigh").value||(isIOS?"0.025":"0.018")), 0.005, 0.08);
+    cfg.thrLow     = clamp(parseFloat($("thrLow").value ||(isIOS?"0.015":"0.012")), 0.003, 0.08);
+    cfg.softPause  = clamp(parseInt($("softPause").value||(isIOS?"700":"480"),10), 120, 1200);
+    cfg.hardPause  = clamp(parseInt($("hardPause").value||(isIOS?"1800":"1200"),10), 500, 3000);
+    cfg.maxRun     = clamp(parseInt($("maxRun").value   ||(isIOS?"6000":"4800"),10), 1500, 10000);
     cfg.translateOn     = $("translateOn").value === "on";
     cfg.translateTarget = $("translateTarget").value;
     cfg.nearRealtime    = $("nearRealtime").value === "on";
 
     if(!cfg.apiKey){ alert("请先输入 OpenAI API Key"); return; }
 
-    // iOS 预设（仅当用户没改默认值时）
-    try{
-      if(isIOS){
-        if ($("thrHigh").value === "0.018") cfg.thrHigh = 0.010;
-        if ($("thrLow").value  === "0.012") cfg.thrLow  = 0.004;
-        if ($("softPause").value === "480") cfg.softPause = 680;
-        if ($("hardPause").value === "1200") cfg.hardPause = 1600;
-        if ($("maxRun").value === "4800") cfg.maxRun = 6200;
-      }
-    }catch{}
-
     disableAll(true); setStatus("准备中…"); log("▶️ Start clicked");
 
     try{
-      // 1) 会话密钥
+      // 1) 获取临时密钥（Realtime）
       const body = { model: cfg.rtModel }; if (cfg.ttsVoice) body.voice = cfg.ttsVoice;
       const sessResp = await fetch("https://api.openai.com/v1/realtime/sessions", {
         method: "POST",
@@ -273,87 +301,48 @@
       if(!ephemeralKey) throw new Error("未拿到临时密钥");
       log("✅ 临时密钥已获取","ok");
 
-      // 2) WebRTC + DC
+      // 2) WebRTC + DataChannel
       pc = new RTCPeerConnection();
       const audioEl = new Audio(); audioEl.autoplay = true;
       pc.ontrack = (e)=>{ audioEl.srcObject = e.streams[0]; };
       dc = pc.createDataChannel("oai-events");
 
-      // FIX v2: 始终启用 server_vad（更长的 silence），避免“说很久不落地”
       dc.onopen = () => {
         log("📡 DataChannel 打开");
-        const turnDetection =
-          { type:"server_vad",
-            threshold: 0.7,                 // 稍更保守，减少碎段
-            prefix_padding_ms: 300,
-            silence_duration_ms: isIOS ? 1400 : 1200,
-            create_response: false,
-            interrupt_response: true };
-
         const sessionUpdate = {
           type: "session.update",
           session: {
             input_audio_transcription: { model: cfg.sttModel, ...(cfg.langHint ? { language: cfg.langHint } : {}) },
-            turn_detection: turnDetection,
+            turn_detection: (cfg.mode === "smart")
+              ? { type:"server_vad", threshold:0.5, prefix_padding_ms:300, silence_duration_ms:600,
+                  create_response:false, interrupt_response:true }
+              : null,
             modalities: ["text"]
           }
         };
         dc.send(JSON.stringify(sessionUpdate));
-        log(`🔧 session.update 已发送（server_vad on, silence=${turnDetection.silence_duration_ms}ms）`);
+        log(`🔧 已发送 session.update（mode=${cfg.mode}）`);
       };
 
-      // FIX v2: 处理 delta/complete 两种转写事件
-      dc.onmessage = (ev) => {
-        try{
-          const e = JSON.parse(ev.data);
-          const t = e.type;
-          if(!t) return;
+      dc.onmessage = (ev) => { try{ handleRealtimeEvent(JSON.parse(ev.data)); }catch{} };
 
-          // 近实时字符（delta）
-          if (t === "conversation.item.input_audio_transcription.delta") {
-            const txt = (e.delta || "").trim();
-            if (txt) {
-              liveSrc = mergeText(liveSrc, txt);
-              if (cfg.translateOn && cfg.nearRealtime) {
-                if (liveTransDebounce) clearTimeout(liveTransDebounce);
-                liveTransDebounce = setTimeout(() => doLiveTranslate(liveSrc), 500);
-              }
-              updatePreview();
-            }
-          }
-
-          // 句子完成（completed）—— 立即落地，不再等待本地阈值
-          if (t === "conversation.item.input_audio_transcription.completed") {
-            const text = (e.transcript || "").trim();
-            if (text) {
-              liveSrc = mergeText(liveSrc, text);
-            }
-            // 直接落地（不做“decentBreak”判断）
-            finalizeFromServer();              // ✅ 关键：保证一分钟内一定有句子落地
-          }
-
-          if (t === "session.created") log("🟦 session.created");
-          if (t === "error") log("⚠️ Realtime 错误: " + (e.error?.message || JSON.stringify(e)), "warn");
-        }catch{}
-      };
-
-      // 3) 麦克风（iOS 关闭 AGC/NS/AEC）
-      const audioConstraints = isIOS
-        ? { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: 48000 }
-        : { channelCount: 1, noiseSuppression: true, echoCancellation: true };
-
+      // 3) 麦克风 + WebAudio RMS（iOS 优化）
+      const audioConstraints = isIOS 
+        ? { channelCount:1, sampleRate:48000, noiseSuppression:false, echoCancellation:false, autoGainControl:true }
+        : { channelCount:1, noiseSuppression:true, echoCancellation:true };
+      
       micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-      micTrack = micStream.getAudioTracks()[0];
-      try { micTrack.contentHint = 'speech'; } catch {}
-      pc.addTrack(micTrack, micStream);
+      micTrack = micStream.getAudioTracks()[0]; pc.addTrack(micTrack, micStream);
 
       ac = new (window.AudioContext || window.webkitAudioContext)();
       const src = ac.createMediaStreamSource(micStream);
-      analyser = ac.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
+      analyser = ac.createAnalyser(); 
+      analyser.fftSize = isIOS ? 2048 : 1024;
+      analyser.smoothingTimeConstant = isIOS ? 0.9 : 0.8;
+      src.connect(analyser);
 
-      // 4) SDP（关闭编码器级 VAD/DTX）
-      const offer = await pc.createOffer({ voiceActivityDetection: false });
-      await pc.setLocalDescription(offer);
+      // 4) SDP 交换
+      const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
       const rtcResp = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(cfg.rtModel)}`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${ephemeralKey}`, "Content-Type":"application/sdp", "OpenAI-Beta":"realtime=v1" },
@@ -362,21 +351,45 @@
       if(!rtcResp.ok){ throw new Error("建立 WebRTC 失败: " + await rtcResp.text()); }
       const answer = { type:"answer", sdp: await rtcResp.text() }; await pc.setRemoteDescription(answer);
 
-      // 5) 本地能量循环（保留；但不再控制最终落地）
+      // 5) 能量循环 +（可选）固定微分段
       loopEnergy(cfg);
       if(cfg.mode === "fast"){ fixedTimer = setInterval(()=>{ if(!paused) safeCommit(); }, cfg.commitMs); }
 
       paused=false; setStatus("已连接 · 正在转写…");
       $("btnToggle").textContent="暂停"; $("btnToggle").disabled=false;
       $("btnStop").disabled=false; $("btnCopyPreview").disabled=false;
-      log("🎧 就绪，服务端分句完成后会立刻落地展示");
+      log("🎧 就绪，实时文本将在预览框滚动显示");
     }catch(err){
       log("❌ " + err.message, "danger");
       setStatus("失败"); disableAll(false); cleanup();
     }
   }
 
-  // —— 仅用于展示的合并 —— //
+  // 收到 Realtime 事件
+  function handleRealtimeEvent(ev){
+    const t = ev.type; if(!t) return;
+    if(t === "conversation.item.input_audio_transcription.completed"){
+      const text = (ev.transcript || "").trim(); if(!text) return;
+      liveSrc = mergeText(liveSrc, text);
+
+      // 近实时译文（可选，防抖）
+      if (cfg.translateOn && cfg.nearRealtime) {
+        if (liveTransDebounce) clearTimeout(liveTransDebounce);
+        liveTransDebounce = setTimeout(() => {
+          doLiveTranslate(liveSrc);
+        }, 600);
+      }
+
+      if (shouldFinalize(liveSrc)) finalizeLive();
+      updatePreview();
+    }else if(t === "session.created"){
+      log("🟦 session.created");
+    }else if(t === "error"){
+      log("⚠️ Realtime 错误: " + (ev.error?.message || JSON.stringify(ev)), "warn");
+    }
+  }
+
+  // 文本合并与落地
   function mergeText(prev, cur){
     const cjk = /[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/;
     const joiner = (cjk.test(prev) || cjk.test(cur)) ? "" : " ";
@@ -390,10 +403,13 @@
     for(let k=max;k>3;k--){ if(a.slice(-k).toLowerCase() === b.slice(0,k).toLowerCase()) return k; }
     return 0;
   }
-
-  // FIX v2: 专门给“服务端 completed”用的强制落地
-  function finalizeFromServer(){
-    if (!liveSrc) return;
+  function shouldFinalize(text){
+    if(/[。！？!?…．.]\s*$/.test(text)) return true;
+    if(text.length > 100 && /\s$/.test(text)) return true;
+    return false;
+  }
+  function finalizeLive(){
+    if(!liveSrc) return;
     const idx = finalPairs.length;
     finalPairs.push({ src: liveSrc, tgt: cfg.translateOn ? null : "" });
     liveSrc = ""; liveTgt = "";
@@ -401,14 +417,16 @@
     if (cfg.translateOn) translateSegment(idx).catch(()=>{});
   }
 
-  // 能量循环（保留：用于软/硬暂停的兜底与 UI 感知）
+  // 能量检测 + 智能 commit（iOS 防抖优化）
   function loopEnergy(cfgLocal){
     const { mode, thrHigh, thrLow, softPause, hardPause, maxRun } = cfgLocal;
-    const buf = new Float32Array(1024);
-    let ema = 0, alpha = 0.08;
-    const minVoiceOnMs  = 180;
-    const minVoiceOffMs = 220;
-    let tentativeOnTs = 0, tentativeOffTs = 0;
+    const bufSize = analyser.fftSize;
+    const buf = new Float32Array(bufSize);
+    let ema = 0, alpha = 0.3;
+    
+    // iOS 防抖：连续 N 帧才认定状态切换
+    let voiceOnFrames = 0, voiceOffFrames = 0;
+    const triggerFrames = isIOS ? 3 : 2;
 
     const tick = () => {
       if(!analyser) return;
@@ -418,58 +436,70 @@
       ema = alpha*rms + (1-alpha)*ema;
 
       const now = performance.now();
-
-      if(!speaking) {
-        if(ema > thrHigh) {
-          if (!tentativeOnTs) tentativeOnTs = now;
-          if (now - tentativeOnTs >= minVoiceOnMs) { speaking = true; lastVoiceOnTs = now; tentativeOnTs = 0; }
-        } else { tentativeOnTs = 0; }
-      } else {
-        if(ema < thrLow) {
-          if (!tentativeOffTs) tentativeOffTs = now;
-          if (now - tentativeOffTs >= minVoiceOffMs) { speaking = false; lastVoiceOffTs = now; tentativeOffTs = 0; }
-        } else { tentativeOffTs = 0; }
+      
+      // 防抖逻辑
+      if(ema > thrHigh){
+        voiceOnFrames++; voiceOffFrames = 0;
+        if(!speaking && voiceOnFrames >= triggerFrames){ 
+          speaking = true; lastVoiceOnTs = now; 
+        }
+      } else if(ema < thrLow){
+        voiceOffFrames++; voiceOnFrames = 0;
+        if(speaking && voiceOffFrames >= triggerFrames){ 
+          speaking = false; lastVoiceOffTs = now; 
+        }
       }
 
-      // 这里不再做“是否落地”的判断，落地交给 server_vad 的 completed
-      // 仅保留硬暂停兜底：若真的很久没 completed，就强制显示一段，避免“憋很久”
       if(mode === "smart" && !paused){
-        if(!speaking && (now - lastVoiceOffTs) > hardPause && liveSrc){
-          finalizeFromServer(); // 兜底强制落地
+        if(!speaking && (now - lastVoiceOffTs) > softPause && (now - lastCommit) > 250){
+          safeCommit(); lastCommit = now;
+        }
+        if(speaking && (now - lastVoiceOnTs) > maxRun && (now - lastCommit) > 300){
+          safeCommit(); lastCommit = now;
+        }
+        if(!speaking && (now - lastVoiceOffTs) > hardPause && (finalPairs.length>0 || liveSrc)){
+          if (liveSrc) finalizeLive();
         }
       }
       rafId = requestAnimationFrame(tick);
     };
     tick();
   }
-
   function safeCommit(){ try{ dc && dc.send(JSON.stringify({ type:"input_audio_buffer.commit" })); }catch{} }
 
-  // —— 翻译 —— //
+  // —— 翻译逻辑 —— //
   function pickTargetLanguage(){
     if (cfg.translateTarget !== "auto") return cfg.translateTarget;
     if (cfg.langHint === "zh") return "de";
     if (cfg.langHint === "de" || cfg.langHint === "en") return "zh";
     return "en";
   }
+
   async function doLiveTranslate(text){
     const reqId = ++liveTransReqId;
     try{
       const tgt = await translateText(text, pickTargetLanguage());
-      if (reqId === liveTransReqId) { liveTgt = tgt; updatePreview(); }
+      if (reqId === liveTransReqId) {
+        liveTgt = tgt;
+        updatePreview();
+      }
     }catch(e){}
   }
+
   async function translateSegment(index){
     const src = finalPairs[index]?.src || "";
     if (!src) return;
     try{
       const tgt = await translateText(src, pickTargetLanguage());
-      finalPairs[index].tgt = tgt; updatePreview();
+      finalPairs[index].tgt = tgt;
+      updatePreview();
     }catch(e){
-      finalPairs[index].tgt = "(翻译失败：" + (e.message||"") + ")"; updatePreview();
+      finalPairs[index].tgt = "(翻译失败：" + (e.message||"") + ")";
+      updatePreview();
       log("⚠️ 段落翻译失败: " + e.message, "warn");
     }
   }
+
   async function translateText(text, targetLang){
     const resp = await fetch("https://api.openai.com/v1/chat/completions",{
       method:"POST",
@@ -479,19 +509,24 @@
         temperature: 0.2,
         messages: [
           { role:"system", content:
-            `You are a high-quality, low-latency translator.
+            `You are a high-quality, low-latency translator. 
              Translate the user's text into ${targetLang}.
-             Requirements: faithful, fluent, keep punctuation, no extra comments.`},
+             Requirements: faithful, fluent, keep punctuation, no extra comments, no brackets, no quotes.
+             If the text seems partial, still translate what's available.`},
           { role:"user", content: text }
         ]
       })
     });
-    if(!resp.ok){ throw new Error("翻译接口错误：" + await resp.text()); }
+    if(!resp.ok){
+      const t = await resp.text();
+      throw new Error("翻译接口错误：" + t);
+    }
     const data = await resp.json();
-    return (data?.choices?.[0]?.message?.content || "").trim();
+    const out = data?.choices?.[0]?.message?.content || "";
+    return (out||"").trim();
   }
 
-  // 控制
+  // 控制与工具
   function togglePause(){
     if(!micTrack) return;
     if(!paused){
@@ -508,7 +543,7 @@
       .then(()=>log("📋 已复制：预览文本","ok"))
       .catch(e=>log("复制失败: "+e.message,"warn"));
   }
-  function stopAll(){ setStatus("已停止"); log("⛔ 停止"); disableAll(false); cleanup(); }
+  function stopAll(){ setStatus("已停止"); log("⏹️ 停止"); disableAll(false); cleanup(); }
   function disableAll(working){
     $("btnStart").disabled = working; $("btnToggle").disabled = true;
     $("btnStop").disabled = !working; $("btnCopyPreview").disabled = true;
@@ -526,6 +561,7 @@
     updatePreview();
   }
 
+  // 工具函数
   const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
 })();
 </script>
