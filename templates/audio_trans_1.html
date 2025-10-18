@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>实时语音转写 + 实时翻译 · 单预览框</title>
+<title>实时语音转写 + 实时翻译 · 单预览框（iOS优化）</title>
 <style>
   :root{--bg:#0b1020;--panel:#111936;--text:#e7ecff;--muted:#93a4c3;--line:#1f2a4d;
     --brand:#7c9dfc;--ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--shadow:0 20px 50px rgba(3,8,23,.4)}
@@ -43,17 +43,13 @@
   .controls{padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
   @media (max-width:1000px){.controls{grid-template-columns:1fr}}
   .small{font-size:12px} .muted{color:var(--muted)}
-  .ios-badge{background:#f59e0b;color:#000;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;margin-left:8px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
     <div class="header">
-      <div class="title">
-        实时语音转写 <span class="pill">智能分句 · 实时翻译</span>
-        <span id="iosBadge" style="display:none" class="ios-badge">iOS优化</span>
-      </div>
+      <div class="title">实时语音转写 <span class="pill">智能分句 · 实时翻译</span></div>
       <div class="status" id="status">未连接</div>
     </div>
 
@@ -96,8 +92,7 @@
             <select id="langHint">
               <option value="">Auto</option><option value="zh" selected>中文</option>
               <option value="de">Deutsch</option><option value="en">English</option>
-              <option value="ja">日本語</option><option value="fr">Français</option>
-              <option value="es">Español</option>
+              <option value="ja">日本語</option><option value="fr">Français</option><option value="es">Español</option>
             </select>
           </div>
           <div>
@@ -114,13 +109,13 @@
           <div>
             <label>软暂停/硬暂停 ms</label>
             <div style="display:flex;gap:8px">
-              <input id="softPause" type="number" min="120" max="1200" value="480" />
-              <input id="hardPause" type="number" min="500" max="3000" value="1200" />
+              <input id="softPause" type="number" min="120" max="800" value="480" />
+              <input id="hardPause" type="number" min="500" max="2000" value="1200" />
             </div>
           </div>
           <div>
             <label>最长连续片段 ms</label>
-            <input id="maxRun" type="number" min="1500" max="10000" value="4800" />
+            <input id="maxRun" type="number" min="1500" max="7000" value="4800" />
           </div>
           <div>
             <label>TTS 输出（可选）</label>
@@ -177,10 +172,7 @@
         <textarea id="preview" class="mono" placeholder="开始后，这里将滚动显示你的长句实时转写与翻译…"></textarea>
       </div>
 
-      <p class="muted small">
-        <b>PC 连贯建议：</b>把 <b>软暂停</b> 450–520ms、<b>硬暂停</b> 1200–1400ms，或把 <b>高阈值</b> 提到 0.020。<br>
-        <b>iOS/iPad 用户：</b>如果词句过短，尝试将 <b>软暂停</b> 提升到 700–900ms、<b>硬暂停</b> 1800–2200ms、<b>高阈值</b> 0.025–0.030。
-      </p>
+      <p class="muted small" id="presetNote">连贯建议：把 <b>软暂停</b> 450–520ms、<b>硬暂停</b> 1200–1400ms，或把 <b>高阈值</b> 提到 0.020。</p>
 
       <label>系统日志</label>
       <div class="log mono small" id="log"></div>
@@ -195,14 +187,58 @@
     $("log").appendChild(p); $("log").scrollTop=$("log").scrollHeight; };
   const setStatus = (txt) => $("status").textContent = txt;
 
-  // 检测 iOS
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  
-  if (isIOS) {
-    $("iosBadge").style.display = "inline-block";
-    log("📱 检测到 iOS/iPad 设备，已应用优化参数", "ok");
-  }
+  // —— 客户端检测（iPad 报 Mac 也能识别）——
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+  const isIpadMacUA = (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  // —— 参数预设（两套默认）——
+  const PRESETS = {
+    desktop: {
+      mode: "smart",
+      commitMs: 650,
+      thrHigh: 0.018, thrLow: 0.012,
+      softPause: 480, hardPause: 1200, maxRun: 4800,
+      // 额外内部参数（不暴露UI）
+      minCommitChars: 8,
+      commitCooldownMs: 280,
+      rt_vad: { threshold: 0.50, prefix_padding_ms: 300, silence_duration_ms: 600 }
+    },
+    ios: {
+      mode: "smart",
+      commitMs: 900,                        // 固定分段模式也更慢一些
+      thrHigh: 0.024, thrLow: 0.016,        // iOS 上底噪/AGC 较强 -> 拉高阈值
+      softPause: 680, hardPause: 1700, maxRun: 6200,  // 更“耐心”
+      minCommitChars: 18,                    // 重要：不提交太短的碎片
+      commitCooldownMs: 520,                 // 重要：提交冷却，抑制频繁 commit
+      rt_vad: { threshold: 0.55, prefix_padding_ms: 350, silence_duration_ms: 900 }
+    }
+  };
+
+  // —— 将预设写入 UI（仅作为初始值，用户改动仍生效）——
+  const preset = isIOS ? PRESETS.ios : PRESETS.desktop;
+  window.addEventListener("DOMContentLoaded", () => {
+    $("mode").value = preset.mode;
+    $("commitMs").value = preset.commitMs;
+    $("thrHigh").value = preset.thrHigh;
+    $("thrLow").value  = preset.thrLow;
+    $("softPause").value = preset.softPause;
+    $("hardPause").value = preset.hardPause;
+    $("maxRun").value = preset.maxRun;
+
+    const note = isIOS
+      ? "已应用：iOS 优化预设（更少断句、更长片段）。如仍过短，可把“硬暂停”提到 1800–2000ms、把“高阈值”提到 0.026。"
+      : "已应用：桌面预设（响应更快）。如句子太短，可把“硬暂停”提到 1400–1600ms 或“高阈值”到 0.020。";
+    $("presetNote").textContent = note;
+
+    // 状态栏小徽标
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = isIOS ? "iOS 优化预设" : "桌面预设";
+    document.querySelector(".title").appendChild(document.createTextNode(" "));
+    document.querySelector(".title").appendChild(pill);
+  });
 
   // WebRTC / Realtime
   let pc=null, dc=null, micStream=null, micTrack=null, ac=null, analyser=null, rafId=null;
@@ -211,16 +247,23 @@
   // 语音状态
   let speaking=false, lastVoiceOnTs=0, lastVoiceOffTs=0, lastCommit=0;
 
+  // 噪声自校准结果（动态阈值用）
+  let noiseFloor = 0, dynHigh = 0, dynLow = 0;
+
   // 文本与翻译聚合
   const finalPairs = [];
   let liveSrc=""; let liveTgt="";
   let liveTransDebounce=null, liveTransReqId=0;
 
-  // 启动时读取的配置（含翻译）
+  // 运行时配置（含翻译）
   let cfg = {
     rtModel: "", sttModel: "", mode:"smart", langHint:"",
     ttsVoice:"", commitMs:650, thrHigh:0.018, thrLow:0.012, softPause:480, hardPause:1200, maxRun:4800,
-    translateOn:true, translateTarget:"auto", nearRealtime:true, apiKey:""
+    translateOn:true, translateTarget:"auto", nearRealtime:true, apiKey:"",
+    // 额外内部参数
+    minCommitChars: preset.minCommitChars,
+    commitCooldownMs: preset.commitCooldownMs,
+    rtVadPreset: preset.rt_vad
   };
 
   // 预览更新：把 finalPairs + live 组装成一个大文本
@@ -230,7 +273,7 @@
       if (pair.src) lines.push(pair.src);
       if (cfg.translateOn) {
         if (pair.tgt) {
-          lines.push("→ " + pair.tgt);
+          lines.push("-" + pair.tgt);
           lines.push("");
         } else {
           lines.push("(处理中…)");
@@ -265,23 +308,25 @@
   $("btnCopyFab").onclick = copyPreview;
 
   async function start(){
+    // 收 UI
     cfg.apiKey   = $("apiKey").value.trim();
     cfg.rtModel  = $("rtModel").value;
     cfg.sttModel = $("sttModel").value;
     cfg.mode     = $("mode").value;
     cfg.langHint = $("langHint").value;
     cfg.ttsVoice = $("ttsVoice").value;
-    
-    // iOS 自动调整默认参数
-    cfg.commitMs   = clamp(parseInt($("commitMs").value||"650",10), 300, 2000);
-    cfg.thrHigh    = clamp(parseFloat($("thrHigh").value||(isIOS?"0.025":"0.018")), 0.005, 0.08);
-    cfg.thrLow     = clamp(parseFloat($("thrLow").value ||(isIOS?"0.015":"0.012")), 0.003, 0.08);
-    cfg.softPause  = clamp(parseInt($("softPause").value||(isIOS?"700":"480"),10), 120, 1200);
-    cfg.hardPause  = clamp(parseInt($("hardPause").value||(isIOS?"1800":"1200"),10), 500, 3000);
-    cfg.maxRun     = clamp(parseInt($("maxRun").value   ||(isIOS?"6000":"4800"),10), 1500, 10000);
+    cfg.commitMs   = clamp(parseInt($("commitMs").value||String(preset.commitMs),10), 300, 2000);
+    cfg.thrHigh    = clamp(parseFloat($("thrHigh").value||String(preset.thrHigh)), 0.005, 0.08);
+    cfg.thrLow     = clamp(parseFloat($("thrLow").value ||String(preset.thrLow)), 0.003, 0.08);
+    cfg.softPause  = clamp(parseInt($("softPause").value||String(preset.softPause),10), 120, 800);
+    cfg.hardPause  = clamp(parseInt($("hardPause").value||String(preset.hardPause),10), 500, 2000);
+    cfg.maxRun     = clamp(parseInt($("maxRun").value   ||String(preset.maxRun),10), 1500, 7000);
     cfg.translateOn     = $("translateOn").value === "on";
     cfg.translateTarget = $("translateTarget").value;
     cfg.nearRealtime    = $("nearRealtime").value === "on";
+    cfg.minCommitChars  = preset.minCommitChars;
+    cfg.commitCooldownMs= preset.commitCooldownMs;
+    cfg.rtVadPreset     = preset.rt_vad;
 
     if(!cfg.apiKey){ alert("请先输入 OpenAI API Key"); return; }
 
@@ -309,39 +354,47 @@
 
       dc.onopen = () => {
         log("📡 DataChannel 打开");
+        const rtTurn = (cfg.mode === "smart")
+          ? { type:"server_vad",
+              threshold: cfg.rtVadPreset.threshold,
+              prefix_padding_ms: cfg.rtVadPreset.prefix_padding_ms,
+              silence_duration_ms: cfg.rtVadPreset.silence_duration_ms,
+              create_response:false, interrupt_response:true }
+          : null;
         const sessionUpdate = {
           type: "session.update",
           session: {
             input_audio_transcription: { model: cfg.sttModel, ...(cfg.langHint ? { language: cfg.langHint } : {}) },
-            turn_detection: (cfg.mode === "smart")
-              ? { type:"server_vad", threshold:0.5, prefix_padding_ms:300, silence_duration_ms:600,
-                  create_response:false, interrupt_response:true }
-              : null,
+            turn_detection: rtTurn,
             modalities: ["text"]
           }
         };
         dc.send(JSON.stringify(sessionUpdate));
-        log(`🔧 已发送 session.update（mode=${cfg.mode}）`);
+        log(`🔧 已发送 session.update（mode=${cfg.mode}；iOS=${isIOS}）`);
       };
 
       dc.onmessage = (ev) => { try{ handleRealtimeEvent(JSON.parse(ev.data)); }catch{} };
 
-      // 3) 麦克风 + WebAudio RMS（iOS 优化）
-      const audioConstraints = isIOS 
-        ? { channelCount:1, sampleRate:48000, noiseSuppression:false, echoCancellation:false, autoGainControl:true }
-        : { channelCount:1, noiseSuppression:true, echoCancellation:true };
-      
+      // 3) 麦克风 + WebAudio RMS（iOS 友好约束）
+      const audioConstraints = {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: false   // iOS 未必生效，但尽量关（防 AGC 过强）
+      };
       micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       micTrack = micStream.getAudioTracks()[0]; pc.addTrack(micTrack, micStream);
 
-      ac = new (window.AudioContext || window.webkitAudioContext)();
+      // 4) AudioContext（iOS 有时需要手势后才能 resume）
+      try {
+        ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive", sampleRate: 48000 });
+      } catch {
+        ac = new (window.AudioContext || window.webkitAudioContext)();
+      }
       const src = ac.createMediaStreamSource(micStream);
-      analyser = ac.createAnalyser(); 
-      analyser.fftSize = isIOS ? 2048 : 1024;
-      analyser.smoothingTimeConstant = isIOS ? 0.9 : 0.8;
-      src.connect(analyser);
+      analyser = ac.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
 
-      // 4) SDP 交换
+      // 5) SDP 交换
       const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
       const rtcResp = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(cfg.rtModel)}`, {
         method: "POST",
@@ -351,9 +404,14 @@
       if(!rtcResp.ok){ throw new Error("建立 WebRTC 失败: " + await rtcResp.text()); }
       const answer = { type:"answer", sdp: await rtcResp.text() }; await pc.setRemoteDescription(answer);
 
-      // 5) 能量循环 +（可选）固定微分段
+      // 6) 启动前快速底噪自校准（≈700ms）
+      setStatus("校准中…"); log("🧪 噪声底噪自校准中（≈0.7s）");
+      await calibrateNoiseFloor(720);
+      log(`📏 底噪=${noiseFloor.toFixed(5)}，动态阈值 high=${dynHigh.toFixed(5)} / low=${dynLow.toFixed(5)}`);
+
+      // 7) 能量循环 +（可选）固定微分段
       loopEnergy(cfg);
-      if(cfg.mode === "fast"){ fixedTimer = setInterval(()=>{ if(!paused) safeCommit(); }, cfg.commitMs); }
+      if(cfg.mode === "fast"){ fixedTimer = setInterval(()=>{ if(!paused) safeCommitGuarded(); }, cfg.commitMs); }
 
       paused=false; setStatus("已连接 · 正在转写…");
       $("btnToggle").textContent="暂停"; $("btnToggle").disabled=false;
@@ -375,12 +433,17 @@
       // 近实时译文（可选，防抖）
       if (cfg.translateOn && cfg.nearRealtime) {
         if (liveTransDebounce) clearTimeout(liveTransDebounce);
+        // iOS 上稍微更长一点，避免过度抖动
+        const wait = isIOS ? 800 : 600;
         liveTransDebounce = setTimeout(() => {
-          doLiveTranslate(liveSrc);
-        }, 600);
+          // 文本太短不译，避免闪烁
+          if (liveSrc && liveSrc.length >= (isIOS ? 30 : 16)) {
+            doLiveTranslate(liveSrc);
+          }
+        }, wait);
       }
 
-      if (shouldFinalize(liveSrc)) finalizeLive();
+      if (shouldFinalize(liveSrc)) finalizeLive();  // 句末/很长 -> 落地 & 译
       updatePreview();
     }else if(t === "session.created"){
       log("🟦 session.created");
@@ -404,29 +467,48 @@
     return 0;
   }
   function shouldFinalize(text){
-    if(/[。！？!?…．.]\s*$/.test(text)) return true;
-    if(text.length > 100 && /\s$/.test(text)) return true;
+    if(/[。！？!?…．.]\s*$/.test(text)) return true;   // 句末标点
+    // iOS 更“耐心”：长度阈值提高
+    const lenCut = isIOS ? 120 : 100;
+    if(text.length > lenCut && /\s$/.test(text)) return true; // 很长后允许落地
     return false;
   }
   function finalizeLive(){
     if(!liveSrc) return;
     const idx = finalPairs.length;
     finalPairs.push({ src: liveSrc, tgt: cfg.translateOn ? null : "" });
-    liveSrc = ""; liveTgt = "";
+    liveSrc = ""; liveTgt = ""; // 清空 live
     updatePreview();
+    // 句落地立即翻译
     if (cfg.translateOn) translateSegment(idx).catch(()=>{});
   }
 
-  // 能量检测 + 智能 commit（iOS 防抖优化）
+  // —— 底噪自校准：估计 RMS 底噪并生成动态阈值 —— //
+  async function calibrateNoiseFloor(ms=700){
+    if(!analyser) return;
+    const buf = new Float32Array(1024);
+    const t0 = performance.now();
+    let acc = 0, n = 0;
+    while (performance.now() - t0 < ms) {
+      analyser.getFloatTimeDomainData(buf);
+      let sum=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; sum+=v*v; }
+      const rms = Math.sqrt(sum/buf.length);
+      acc += rms; n++;
+      await new Promise(r=>setTimeout(r, 20));
+    }
+    noiseFloor = n>0 ? acc/n : 0;
+    // 动态阈值 = max(手动阈值, 噪声×系数)
+    const mulHigh = isIOS ? 3.5 : 3.0;
+    const mulLow  = isIOS ? 2.4 : 2.0;
+    dynHigh = Math.max(cfg.thrHigh, noiseFloor * mulHigh);
+    dynLow  = Math.max(cfg.thrLow,  noiseFloor * mulLow);
+  }
+
+  // —— 能量检测 + 智能 commit（迟滞 + 软/硬暂停 + 最长片段 + 提交冷却 + 最短字数）——
   function loopEnergy(cfgLocal){
-    const { mode, thrHigh, thrLow, softPause, hardPause, maxRun } = cfgLocal;
-    const bufSize = analyser.fftSize;
-    const buf = new Float32Array(bufSize);
+    const { mode, softPause, hardPause, maxRun } = cfgLocal;
+    const buf = new Float32Array(1024);
     let ema = 0, alpha = 0.3;
-    
-    // iOS 防抖：连续 N 帧才认定状态切换
-    let voiceOnFrames = 0, voiceOffFrames = 0;
-    const triggerFrames = isIOS ? 3 : 2;
 
     const tick = () => {
       if(!analyser) return;
@@ -435,28 +517,28 @@
       const rms = Math.sqrt(sum/buf.length);
       ema = alpha*rms + (1-alpha)*ema;
 
+      // 使用“动态阈值”而不是固定阈值
+      const high = dynHigh || cfg.thrHigh;
+      const low  = dynLow  || cfg.thrLow;
+
       const now = performance.now();
-      
-      // 防抖逻辑
-      if(ema > thrHigh){
-        voiceOnFrames++; voiceOffFrames = 0;
-        if(!speaking && voiceOnFrames >= triggerFrames){ 
-          speaking = true; lastVoiceOnTs = now; 
-        }
-      } else if(ema < thrLow){
-        voiceOffFrames++; voiceOnFrames = 0;
-        if(speaking && voiceOffFrames >= triggerFrames){ 
-          speaking = false; lastVoiceOffTs = now; 
-        }
-      }
+      if(!speaking && ema > high){ speaking = true; lastVoiceOnTs = now; }
+      if(speaking && ema < low){ speaking = false; lastVoiceOffTs = now; }
 
       if(mode === "smart" && !paused){
-        if(!speaking && (now - lastVoiceOffTs) > softPause && (now - lastCommit) > 250){
-          safeCommit(); lastCommit = now;
+        // 条件1：静音超过 softPause，且满足最短字数/冷却 => 小结（但不 finalize）
+        if(!speaking && (now - lastVoiceOffTs) > softPause){
+          const cooldownOk = (now - lastCommit) > cfg.commitCooldownMs;
+          const enoughText = (liveSrc && liveSrc.length >= cfg.minCommitChars);
+          if ((cooldownOk && enoughText) || (now - lastVoiceOffTs) > (hardPause + 150)) {
+            safeCommitGuarded(); lastCommit = now;
+          }
         }
-        if(speaking && (now - lastVoiceOnTs) > maxRun && (now - lastCommit) > 300){
-          safeCommit(); lastCommit = now;
+        // 条件2：说太久，切一刀
+        if(speaking && (now - lastVoiceOnTs) > maxRun && (now - lastCommit) > cfg.commitCooldownMs){
+          safeCommitGuarded(); lastCommit = now;
         }
+        // 条件3：长硬暂停 => 强制 finalize（即使没标点）
         if(!speaking && (now - lastVoiceOffTs) > hardPause && (finalPairs.length>0 || liveSrc)){
           if (liveSrc) finalizeLive();
         }
@@ -465,11 +547,22 @@
     };
     tick();
   }
-  function safeCommit(){ try{ dc && dc.send(JSON.stringify({ type:"input_audio_buffer.commit" })); }catch{} }
 
-  // —— 翻译逻辑 —— //
+  // 受保护的 commit（带 try/catch 与小日志）
+  function safeCommitGuarded(){
+    try{
+      dc && dc.send(JSON.stringify({ type:"input_audio_buffer.commit" }));
+      //log("· commit", "muted"); // 如需观察节流可打开
+    }catch(e){
+      // 静默
+    }
+  }
+  const safeCommit = safeCommitGuarded; // 兼容旧调用
+
+  // —— 翻译 —— //
   function pickTargetLanguage(){
     if (cfg.translateTarget !== "auto") return cfg.translateTarget;
+    // 自动对向：若正在用中文转写 => 译成德语；若德/英 => 译成中文；其它 => 英文
     if (cfg.langHint === "zh") return "de";
     if (cfg.langHint === "de" || cfg.langHint === "en") return "zh";
     return "en";
@@ -483,7 +576,7 @@
         liveTgt = tgt;
         updatePreview();
       }
-    }catch(e){}
+    }catch(e){ /* 静默失败 */ }
   }
 
   async function translateSegment(index){
@@ -556,7 +649,7 @@
     try{ micStream && micStream.getTracks().forEach(t=>t.stop()); }catch{}
     if(ac){ try{ ac.close(); }catch{} ac=null; }
     pc=null; dc=null; micTrack=null; micStream=null; analyser=null; ephemeralKey=null; paused=false;
-    speaking=false;
+    speaking=false; noiseFloor=0; dynHigh=0; dynLow=0;
     finalPairs.length=0; liveSrc=""; liveTgt="";
     updatePreview();
   }
