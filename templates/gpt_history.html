@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GitHub Markdown 提取 · Prompt/Response 抓取器（修正版）</title>
+<style>
+  :root{
+    --bg:#0b1020;--card:#111936;--text:#e7ecff;--muted:#93a4c3;--line:#1f2a4d;
+    --brand:#7c9dfc;--ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--shadow:0 16px 40px rgba(3,8,23,.35)
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b1020,#0f1530);color:var(--text);
+       font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+  h1{font-size:22px;margin:0 0 14px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input[type="text"]{flex:1;min-width:360px;background:#0c1430;color:var(--text);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;outline:none}
+  button{border:0;border-radius:10px;padding:10px 14px;color:#0b1020;background:var(--brand);cursor:pointer}
+  button.secondary{background:#223058;color:var(--text);border:1px solid var(--line)}
+  button.ghost{background:transparent;color:var(--text);border:1px dashed var(--line)}
+  .bad{color:var(--danger)}
+  .ok{color:var(--ok)}
+  .muted{color:var(--muted)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  .card{background:#0e1836;border:1px solid var(--line);border-radius:12px;padding:12px}
+  .badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin-right:6px;font-size:12px}
+  textarea{width:100%;min-height:120px;background:#0c1430;color:var(--text);border:1px solid var(--line);
+    border-radius:10px;padding:10px;resize:vertical}
+  .tbl{width:100%;border-collapse:collapse;margin-top:8px}
+  .tbl th,.tbl td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .footer{margin-top:16px;color:var(--muted);font-size:13px}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GitHub Markdown 提取 · Prompt/Response 抓取器（修正版）</h1>
+
+  <div class="panel">
+    <div class="row">
+      <input id="url" type="text" placeholder="粘贴 GitHub 链接（支持 github.com/.../blob/... 或 raw.githubusercontent.com/...）" />
+      <button id="go">抓取并提取</button>
+      <button id="demo" class="secondary">填入示例链接</button>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <label class="badge"><input type="checkbox" id="pickPrompt" checked> 只提取 Prompt</label>
+      <label class="badge"><input type="checkbox" id="pickResponse" checked> 只提取 Response</label>
+      <label class="badge"><input type="checkbox" id="trim" checked> 去除首尾空白</label>
+      <label class="badge"><input type="checkbox" id="markdownFence"> 自动 ```md 包裹</label>
+      <label class="badge"><input type="checkbox" id="ignoreCode" checked> 忽略代码块内标记</label>
+    </div>
+
+    <div id="status" class="muted" style="margin-top:8px"></div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div>
+            <strong>结果</strong>
+            <span id="count" class="muted">0 条</span>
+          </div>
+          <div class="actions">
+            <button class="secondary" id="copyAll">复制所有</button>
+            <button class="secondary" id="exportJSON">导出 JSON</button>
+            <button class="secondary" id="exportCSV">导出 CSV</button>
+            <button class="ghost" id="toggleRaw">查看原文</button>
+          </div>
+        </div>
+        <table class="tbl" id="resultTbl">
+          <thead><tr><th style="width:120px">类型</th><th>内容</th><th style="width:120px">操作</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <strong>源文本（只读）</strong>
+        <textarea id="raw" readonly placeholder="抓取成功后显示原 Markdown 文本"></textarea>
+      </div>
+    </div>
+
+    <div class="footer">规则：匹配行首经常见修饰（# > * - 空格）后的 <code>Prompt</code> / <code>Response</code> + 英文或中文冒号，大小写不敏感；自动切段至下一个标记或文末；可选择忽略代码块内伪标记。</div>
+  </div>
+</div>
+
+<script>
+  const $ = sel => document.querySelector(sel);
+  const urlInput = $('#url');
+  const statusEl = $('#status');
+  const countEl = $('#count');
+  const tbody = $('#resultTbl tbody');
+  const rawTA = $('#raw');
+
+  const pickPrompt = $('#pickPrompt');
+  const pickResponse = $('#pickResponse');
+  const trimOpt = $('#trim');
+  const mdFence = $('#markdownFence');
+  const ignoreCode = $('#ignoreCode');
+
+  $('#demo').addEventListener('click', ()=>{
+    urlInput.value = 'https://github.com/kay-cottage/2025_study/blob/main/core/Bio_tr/10_17_1_bio_u.md';
+  });
+
+  $('#toggleRaw').addEventListener('click', ()=>{
+    rawTA.style.display = (rawTA.style.display==='none'?'block':'none');
+  });
+
+  function toRawUrl(input){
+    try{
+      const u = new URL(input.trim());
+      if(u.hostname === 'raw.githubusercontent.com') return u.toString();
+      if(u.hostname === 'github.com' && u.pathname.includes('/blob/')){
+        const parts = u.pathname.split('/').filter(Boolean);
+        const owner = parts[0], repo = parts[1], branch = parts[3];
+        const path = parts.slice(4).join('/');
+        return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+      }
+      if(u.hostname === 'github.com'){
+        u.searchParams.set('plain','1'); u.searchParams.set('raw','1');
+        return u.toString();
+      }
+      return input;
+    }catch{ return input; }
+  }
+
+  // —— 关键修复：不用单个大正则，而是“标记扫描 + 片段切割”，并支持：
+  // 1) 行首容忍 # > * - 空格；2) Prompt/Response 大小写不敏感；3) 支持英文: 与中文：；4) 可忽略代码块内匹配；5) 不会串型过滤。
+  function extractBlocks(text, {wantPrompt=true, wantResponse=true, doTrim=true, fence=false, skipCode=true} = {}){
+    const lines = text.replace(/\r\n?/g, '\n').split('\n');
+    const markers = [];
+    let inFence = false;
+    let fenceTick = ''; // ``` 或 ~~~
+    let offset = 0;     // 当前起始字符偏移（用于把行号映射到字符位置）
+    const lineStartPos = []; // 每行起始全局偏移
+    for(const ln of lines){ lineStartPos.push(offset); offset += ln.length + 1; }
+
+    const markerRe = /^[\s>#*\-\u00A0]*\b(Prompt|Response)\b[\s]*[:：]/i;
+
+    for(let i=0;i<lines.length;i++){
+      let s = lines[i];
+
+      // 侦测围栏代码块（``` 或 ~~~），仅当行首出现围栏时切换状态
+      const fenceMatch = s.match(/^(\s*)(`{3,}|~{3,})(\s*\S+)?\s*$/);
+      if(fenceMatch){
+        if(!inFence){ inFence = true; fenceTick = fenceMatch[2][0]; }
+        else{
+          // 只有相同符号才结束
+          if(fenceMatch[2][0] === fenceTick){ inFence = false; fenceTick = ''; }
+        }
+        // 即便是围栏行，也不要去匹配标记
+        continue;
+      }
+
+      if(skipCode && inFence) continue;
+
+      // 允许 ### Prompt: / > Prompt: / - Prompt: /  空格 Prompt: 等
+      const m = s.match(markerRe);
+      if(m){
+        const rawType = m[1]; // 捕获原文类型
+        const type = rawType.toLowerCase() === 'prompt' ? 'Prompt' : 'Response';
+        markers.push({
+          type,
+          line: i,
+          pos: lineStartPos[i] + s.indexOf(m[0])  // 片段起点用于切割
+        });
+      }
+    }
+
+    // 没有标记直接返回空
+    if(markers.length === 0) return [];
+
+    // 按出现顺序切片：本标记起点 -> 下一个标记所在行起点/pos（更稳）或文末
+    const out = [];
+    for(let k=0;k<markers.length;k++){
+      const cur = markers[k];
+      const next = markers[k+1];
+      const start = cur.pos;
+      const end = next ? next.pos : text.length;
+      let chunk = text.slice(start, end);
+
+      // 去掉前缀（将“Prompt:”“Response:”部分剥离）
+      // 只剥离首行前缀，不动正文其他位置的同词
+      chunk = chunk.replace(/^[\s>#*\-\u00A0]*\b(Prompt|Response)\b[\s]*[:：]\s*/i, '');
+
+      if(doTrim) chunk = chunk.replace(/^\s+|\s+$/g, '');
+      if(fence && !/^```/.test(chunk)) chunk = "```md\n" + chunk + "\n```";
+
+      if((cur.type === 'Prompt' && wantPrompt) || (cur.type === 'Response' && wantResponse)){
+        out.push({ type: cur.type, content: chunk });
+      }
+    }
+    return out;
+  }
+
+  function renderRows(rows){
+    tbody.innerHTML = '';
+    for(const {type, content} of rows){
+      const tr = document.createElement('tr');
+      const tdType = document.createElement('td');
+      const tdContent = document.createElement('td');
+      const tdOps = document.createElement('td');
+
+      tdType.innerHTML = `<span class="badge">${type}</span>`;
+      const pre = document.createElement('pre');
+      pre.style.whiteSpace = 'pre-wrap';
+      pre.style.margin = 0;
+      pre.textContent = content;
+      tdContent.appendChild(pre);
+
+      const btn = document.createElement('button');
+      btn.className = 'secondary';
+      btn.textContent = '复制本条';
+      btn.addEventListener('click', async ()=>{
+        await navigator.clipboard.writeText(content);
+        toast('已复制该片段');
+      });
+      tdOps.appendChild(btn);
+
+      tr.appendChild(tdType);
+      tr.appendChild(tdContent);
+      tr.appendChild(tdOps);
+      tbody.appendChild(tr);
+    }
+    countEl.textContent = rows.length + ' 条';
+  }
+
+  function toast(msg, kind='ok'){
+    statusEl.textContent = msg;
+    statusEl.className = kind === 'ok' ? 'ok' : (kind === 'bad' ? 'bad' : 'muted');
+  }
+
+  async function fetchText(rawUrl){
+    const res = await fetch(rawUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'text/plain, text/markdown, */*' },
+      cache: 'no-store',
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    return await res.text();
+  }
+
+  function exportJSON(rows){
+    const blob = new Blob([JSON.stringify(rows, null, 2)], {type:'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    download(url, 'extracted_prompt_response.json');
+  }
+
+  function exportCSV(rows){
+    const esc = s => `"${String(s).replace(/"/g,'""')}"`;
+    const header = 'type,content\n';
+    const body = rows.map(r => `${esc(r.type)},${esc(r.content)}`).join('\n');
+    const blob = new Blob([header + body], {type:'text/csv;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    download(url, 'extracted_prompt_response.csv');
+  }
+
+  function download(url, filename){
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 200);
+  }
+
+  let lastRows = [];
+
+  $('#go').addEventListener('click', async ()=>{
+    const input = urlInput.value.trim();
+    if(!input){ toast('请先粘贴 GitHub 链接','bad'); return; }
+
+    const rawUrl = toRawUrl(input);
+    toast('抓取中…');
+    try{
+      const txt = await fetchText(rawUrl);
+      rawTA.value = txt;
+      const rows = extractBlocks(txt, {
+        wantPrompt: pickPrompt.checked,
+        wantResponse: pickResponse.checked,
+        doTrim: trimOpt.checked,
+        fence: mdFence.checked,
+        skipCode: ignoreCode.checked,
+      });
+      lastRows = rows;
+      renderRows(rows);
+      if(rows.length === 0){
+        toast('未匹配到 Prompt/Response 片段（或被过滤条件排除）。','bad');
+      }else{
+        toast('解析完成','ok');
+      }
+    }catch(err){
+      console.error(err);
+      toast(`抓取失败：${err.message}`,'bad');
+    }
+  });
+
+  $('#copyAll').addEventListener('click', async ()=>{
+    if(!lastRows.length){ toast('没有内容可复制','bad'); return; }
+    const text = lastRows.map(r => `# ${r.type}\n${r.content}`).join('\n\n---\n\n');
+    await navigator.clipboard.writeText(text);
+    toast('已复制全部结果','ok');
+  });
+
+  $('#exportJSON').addEventListener('click', ()=> exportJSON(lastRows));
+  $('#exportCSV').addEventListener('click', ()=> exportCSV(lastRows));
+</script>
+</body>
+</html>
